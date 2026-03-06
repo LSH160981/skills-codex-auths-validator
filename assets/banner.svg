@@ -1,0 +1,30 @@
+<svg width="1200" height="320" viewBox="0 0 1200 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="skills-codex-auths-validator banner">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="320" rx="20" fill="url(#bg)"/>
+  <circle cx="1030" cy="70" r="120" fill="#ffffff" fill-opacity="0.08"/>
+  <circle cx="140" cy="290" r="180" fill="#ffffff" fill-opacity="0.06"/>
+  <rect x="70" y="60" width="8" height="200" rx="4" fill="url(#acc)"/>
+  <text x="100" y="120" fill="#e2e8f0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="44" font-weight="700">
+    codex-auths-validator
+  </text>
+  <text x="100" y="168" fill="#cbd5e1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="24" font-weight="500">
+    OpenClaw Skill · Auth JSON Validation · Cleanup Automation
+  </text>
+  <text x="100" y="210" fill="#94a3b8" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20">
+    Hourly cleanup · ZIP import validation · Daily GitHub learning updates
+  </text>
+  <g transform="translate(865,185)">
+    <rect x="0" y="0" width="250" height="88" rx="14" fill="#0b1226" stroke="#334155"/>
+    <text x="20" y="35" fill="#22d3ee" font-family="JetBrains Mono,Consolas,monospace" font-size="16">STATUS: HEALTHY</text>
+    <text x="20" y="61" fill="#a5b4fc" font-family="JetBrains Mono,Consolas,monospace" font-size="14">200/429 keep · 401/403 drop</text>
+  </g>
+</svg>
