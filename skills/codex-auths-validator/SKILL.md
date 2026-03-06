@@ -9,7 +9,9 @@ Validate and clean Codex auth JSON files in a batch.
 
 ## Run scope
 
-- Target directory: `/home/docker/CLIProxyAPI/auths`
+- Target directories:
+  - `/home/docker/CLIProxyAPI/auths`（有效且有额度）
+  - `/home/docker/CLIProxyAPI/auths_no_quota`（有效但无额度/限流）
 - Target files: `*.json`
 - Validation endpoint: `GET https://chatgpt.com/backend-api/wham/usage`
 - Required headers:
@@ -19,12 +21,11 @@ Validate and clean Codex auth JSON files in a batch.
 
 ## Decision rules
 
-- Keep file when response is `200`.
-- Keep file when response is `429` (rate/quota exhaustion; not invalid token).
-- Remove file when response is `401` or `403` (token/account invalid or unusable).
-- Remove file when JSON is malformed or missing `access_token` / `account_id`.
-- Remove AppleDouble junk files (`._*.json`) directly to quarantine.
-- Keep file on transient network errors / timeout for manual recheck.
+- `200` 且有额度 -> 放在 `/home/docker/CLIProxyAPI/auths`。
+- `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
+- `429`（限流/额度耗尽）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
+- `401/403`、坏 JSON、缺少 `access_token` / `account_id`、`._*.json` -> 无效（删除或隔离，按模式）。
+- 非 `200/429/401/403` 默认按无效处理（可通过模式调整）。
 
 ## Safety mode
 
@@ -48,10 +49,16 @@ Optional flags:
 
 ```bash
 node skills/codex-auths-validator/scripts/validate-auths.mjs \
-  --dir /home/docker/CLIProxyAPI/auths \
+  --dir-quota /home/docker/CLIProxyAPI/auths \
+  --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
+  --invalid-action delete \
   --concurrency 40 \
   --timeout-ms 12000
 ```
+
+`--invalid-action`:
+- `delete`：无效文件直接删除（默认）
+- `quarantine`：无效文件移入 `_quarantine_<timestamp>`
 
 ## Output contract
 
