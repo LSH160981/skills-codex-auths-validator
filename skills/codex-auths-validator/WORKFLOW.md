@@ -153,10 +153,16 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 这个 skill 固定要求有 **两个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）：
 
-1. **每小时自动校验清理任务**（上海时区）
-   - 扫描 `/home/docker/CLIProxyAPI/auths/*.json`
-   - `200/429` 保留，`401/403`/坏 JSON/缺字段/`._*.json` 删除
-   - 完成后给用户发送统计汇总
+1. **每小时自动校验清理任务**（上海时区，双目录流转）
+   - 同时扫描：
+     - `/home/docker/CLIProxyAPI/auths`（有效且有额度）
+     - `/home/docker/CLIProxyAPI/auths_no_quota`（有效但无额度/限流）
+   - 判定与动作：
+     - `200` 且有额度 -> 放回/保留在 `auths`
+     - `200` 但无额度 或 `429` -> 放到 `auths_no_quota`
+     - `401/403`、坏 JSON、缺字段、`._*.json` -> 直接删除
+   - 下次每小时继续双目录复检，额度恢复则自动移回 `auths`
+   - 完成后给用户发送统计汇总（总检查/有额度/无额度/删除/迁移统计/删除原因）
 
 2. **每日 00:00 GitHub 学习巡检任务**（上海时区）
    - 定点学习相关仓库和代码变化
