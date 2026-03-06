@@ -9,22 +9,36 @@
       <stop offset="100%" stop-color="#a78bfa"/>
     </linearGradient>
   </defs>
+
   <rect width="1200" height="320" rx="20" fill="url(#bg)"/>
   <circle cx="1030" cy="70" r="120" fill="#ffffff" fill-opacity="0.08"/>
   <circle cx="140" cy="290" r="180" fill="#ffffff" fill-opacity="0.06"/>
-  <rect x="70" y="60" width="8" height="200" rx="4" fill="url(#acc)"/>
-  <text x="100" y="120" fill="#e2e8f0" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="44" font-weight="700">
+  <rect x="70" y="52" width="8" height="216" rx="4" fill="url(#acc)"/>
+
+  <!-- 中文标题 -->
+  <text x="100" y="108" fill="#e2e8f0" font-family="Noto Sans SC, PingFang SC, Microsoft YaHei, Inter, Segoe UI, Arial, sans-serif" font-size="36" font-weight="700">
+    Codex 认证 JSON 自动化验证技能
+  </text>
+
+  <!-- English title -->
+  <text x="100" y="148" fill="#cbd5e1" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">
     codex-auths-validator
   </text>
-  <text x="100" y="168" fill="#cbd5e1" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="24" font-weight="500">
-    OpenClaw Skill · Auth JSON Validation · Cleanup Automation
+
+  <!-- 中文副标题 -->
+  <text x="100" y="188" fill="#cbd5e1" font-family="Noto Sans SC, PingFang SC, Microsoft YaHei, Inter, Segoe UI, Arial, sans-serif" font-size="19" font-weight="500">
+    每小时清理 · ZIP 导入校验 · 每日 GitHub 学习巡检
   </text>
-  <text x="100" y="210" fill="#94a3b8" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20">
-    Hourly cleanup · ZIP import validation · Daily GitHub learning updates
+
+  <!-- English subtitle -->
+  <text x="100" y="220" fill="#94a3b8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">
+    Hourly Cleanup · ZIP Import Validation · Daily GitHub Learning Checks
   </text>
-  <g transform="translate(865,185)">
-    <rect x="0" y="0" width="250" height="88" rx="14" fill="#0b1226" stroke="#334155"/>
-    <text x="20" y="35" fill="#22d3ee" font-family="JetBrains Mono,Consolas,monospace" font-size="16">STATUS: HEALTHY</text>
-    <text x="20" y="61" fill="#a5b4fc" font-family="JetBrains Mono,Consolas,monospace" font-size="14">200/429 keep · 401/403 drop</text>
+
+  <g transform="translate(840,176)">
+    <rect x="0" y="0" width="310" height="108" rx="14" fill="#0b1226" stroke="#334155"/>
+    <text x="20" y="34" fill="#22d3ee" font-family="JetBrains Mono, Consolas, monospace" font-size="16">STATUS: HEALTHY</text>
+    <text x="20" y="59" fill="#a5b4fc" font-family="Noto Sans SC, PingFang SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="14">规则：200/429 保留 · 401/403 删除</text>
+    <text x="20" y="83" fill="#94a3b8" font-family="JetBrains Mono, Consolas, monospace" font-size="13">Rule: Keep 200/429 · Drop 401/403</text>
   </g>
 </svg>
