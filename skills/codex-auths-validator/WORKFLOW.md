@@ -32,8 +32,9 @@
 
 ### 保留（PASS）
 
-- HTTP `200`：凭证可用
-- HTTP `429`：限流/额度问题，不等于 token 失效，保留
+- HTTP `200` 且有额度：保留在 `auths`
+- HTTP `200` 但无额度：保留在 `auths_no_quota`
+- HTTP `429`：限流/额度问题，不等于 token 失效，放 `auths_no_quota`
 
 ### 移除（REMOVE）
 
