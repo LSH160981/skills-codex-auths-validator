@@ -182,6 +182,17 @@ When new evidence appears (new GitHub version, API change, user policy change):
 
 Maintain snapshots so future changes can be compared quickly.
 
+## Required sync policy (codex-auths-validator)
+
+For any change related to `codex-auths-validator` (rules, paths, API endpoint, headers, cron behavior, workflow, docs, scripts):
+
+1. Update this skill immediately (`SKILL.md` / `WORKFLOW.md` / `scripts/*` as needed).
+2. Commit immediately with a Chinese commit message.
+3. Push immediately to GitHub repository `LSH160981/skills-codex-auths-validator`.
+4. Reply with commit id(s) after push.
+
+Do not delay bundling changes for later when they affect behavior or operation.
+
 ## Daily 00:00 GitHub learning workflow (Asia/Shanghai)
 
 When user requires scheduled learning and code tracking:
