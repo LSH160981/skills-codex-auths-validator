@@ -37,6 +37,27 @@ Quarantine location pattern:
 Write report file:
 - `_validation_report.json`
 
+## 首次安装引导（降低新用户操作）
+
+如果用户第一次使用本 skill，先走“自动发现 + 最少提问”流程：
+
+1. 先自动探测认证目录（不要一上来就问用户）：
+
+```bash
+node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
+```
+
+2. 优先采用探测结果里的 `recommended` 目录。
+3. 若探测不到可靠目录，才询问用户认证目录路径。
+4. 若用户安装了 `Cli-Proxy-API-Management-Center`，优先检查其 `auth-dir` 配置与 Docker 挂载路径。
+5. 自动创建无额度目录：`<auth_dir>_no_quota`。
+6. 首次引导时用中文给用户明确说明：
+   - 你识别到的认证目录
+   - 双目录规则（有额度/无额度）
+   - 接下来会自动创建的每小时与每日任务
+
+> 目标：尽量少让新用户手动配置，能自动发现就自动发现。
+
 ## Scripts mapping（两个脚本分别做什么）
 
 ### 1) `scripts/validate-auths.mjs`（一次性人工清理/导入前筛选）
