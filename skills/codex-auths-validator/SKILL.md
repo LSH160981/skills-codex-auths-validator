@@ -234,7 +234,8 @@ When this skill is installed/used on a new machine, ALWAYS ensure these two cron
 
 - Name: `Codex auths 每小时自动校验清理（上海）`
 - Schedule: `0 * * * *` (`Asia/Shanghai`)
-- Behavior (dual-directory flow):
+- Behavior (dual-directory flow, stabilized):
+  - use script: `skills/codex-auths-validator/scripts/hourly-reconcile.mjs`
   - scan both directories:
     - `/home/docker/CLIProxyAPI/auths` (valid + quota)
     - `/home/docker/CLIProxyAPI/auths_no_quota` (valid but no quota / rate-limited)
@@ -242,6 +243,8 @@ When this skill is installed/used on a new machine, ALWAYS ensure these two cron
   - `200` with positive remaining quota -> move to `/home/docker/CLIProxyAPI/auths`
   - `200` with zero quota OR `429` -> move to `/home/docker/CLIProxyAPI/auths_no_quota`
   - delete invalid (`401/403`, malformed JSON, missing required fields, `._*.json`)
+  - transient errors (`timeout/network/5xx/other`) keep in-place, do NOT reclassify as no-quota
+  - lock file `/tmp/codex-auths-hourly.lock` prevents concurrent runs and metric oscillation
   - next hourly run re-checks both dirs and auto-moves files back when quota recovers
   - send Chinese summary:
     - 总共检查：<总数> 个
@@ -250,6 +253,7 @@ When this skill is installed/used on a new machine, ALWAYS ensure these two cron
     - 删除：<数量>
     - 目录迁移统计：<from->to 计数>
     - 删除原因统计：<按原因计数>
+    - 临时错误保留：<数量>（<按原因计数>）
 
 ### Job B: Daily 00:00 GitHub learning check
 
