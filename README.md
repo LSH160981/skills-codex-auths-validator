@@ -76,6 +76,24 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - `SCHEMA_VALID_PROVIDER`
 - `TRANSIENT_KEEP`
 
+### 运行截图识别样例（OCR整理）
+
+根据用户提供的运行截图，识别并记录了两类关键结果：
+
+1) ZIP 导入样例：
+- 总 JSON：500
+- `auths`：494
+- `auths_no_quota`：6
+- `auths_invalid`：0
+- 状态：`VALID_QUOTA=494`，`VALID_NO_QUOTA=6`
+
+2) 每小时巡检波动片段：
+- 有额度约 5745~5758
+- 无额度约 68~72
+- 删除 0~9（常见：`auth_401` / `auth_403` / `status_500`）
+
+说明：已通过并发锁与临时错误保留策略降低该类波动。
+
 ### 对话总结（版本演进）
 
 - 从 codex 单类型校验，扩展到多 provider 自动识别
