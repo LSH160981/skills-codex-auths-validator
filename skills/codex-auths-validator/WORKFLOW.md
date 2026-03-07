@@ -4,7 +4,7 @@
 
 ## 1. 任务背景
 
-- 认证文件目录：`/home/docker/CLIProxyAPI/auths`
+- 认证文件目录：默认可为 `/home/docker/CLIProxyAPI/auths`，但应支持任意用户提供路径（`auths_dir`）
 - 文件类型：大量 `*.json`（以 Codex 凭证为主）
 - 核心诉求：
   1. 自动识别并移除完全无用凭证
@@ -166,6 +166,8 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 ```
 
 若探测到 `recommended` 路径，直接作为认证目录；仅在探测失败时才向用户提问目录路径。
+
+若用户直接给出目录路径，则跳过探测，直接使用用户路径作为 `auths_dir`，并自动创建 `<auths_dir>_no_quota`。
 
 然后再创建并启用两个任务：
 
