@@ -68,7 +68,8 @@
 已创建 skill：`skills/codex-auths-validator/`
 
 - `SKILL.md`：任务说明、规则、执行方式
-- `scripts/validate-auths.mjs`：批量校验与隔离脚本
+- `scripts/validate-auths.mjs`：一次性人工校验/清理脚本（支持删除或隔离）
+- `scripts/hourly-reconcile.mjs`：每小时定时任务专用稳定脚本（并发锁 + 临时错误保留）
 - `WORKFLOW.md`：本文件（完整流程说明）
 
 ---
