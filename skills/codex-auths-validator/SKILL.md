@@ -37,21 +37,21 @@ Quarantine location pattern:
 Write report file:
 - `_validation_report.json`
 
-## Execute
+## Scripts mapping（两个脚本分别做什么）
 
-Run:
+### 1) `scripts/validate-auths.mjs`（一次性人工清理/导入前筛选）
 
-```bash
-node skills/codex-auths-validator/scripts/validate-auths.mjs
-```
+用途：
+- 手动全量校验、一次性清理、导入前预检。
+- 支持无效文件 `delete` 或 `quarantine` 两种模式。
 
-Optional flags:
+典型命令：
 
 ```bash
 node skills/codex-auths-validator/scripts/validate-auths.mjs \
   --dir-quota /home/docker/CLIProxyAPI/auths \
   --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
-  --invalid-action delete \
+  --invalid-action quarantine \
   --concurrency 40 \
   --timeout-ms 12000
 ```
@@ -59,6 +59,23 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 `--invalid-action`:
 - `delete`：无效文件直接删除（默认）
 - `quarantine`：无效文件移入 `_quarantine_<timestamp>`
+
+### 2) `scripts/hourly-reconcile.mjs`（每小时定时任务专用，稳定版）
+
+用途：
+- 供 cron 每小时自动任务调用。
+- 内置并发锁（`/tmp/codex-auths-hourly.lock`）防止重叠执行。
+- 临时错误（timeout/network/5xx）保留原位，避免统计抖动。
+
+典型命令：
+
+```bash
+node skills/codex-auths-validator/scripts/hourly-reconcile.mjs \
+  --dir-quota /home/docker/CLIProxyAPI/auths \
+  --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
+  --concurrency 40 \
+  --timeout-ms 12000
+```
 
 ## Output contract
 
