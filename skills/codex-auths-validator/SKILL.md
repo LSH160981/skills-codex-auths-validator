@@ -222,6 +222,20 @@ When user asks for hourly auto-clean:
 
 Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEvent`.
 
+## 对话总结（阶段成果，需持续更新）
+
+以下为本技能从0到1的关键对话沉淀（用于新维护者快速理解）：
+
+1. **基础能力落地**：先实现 codex JSON 批量验证、失效清理、ZIP 导入。
+2. **双目录分层**：将“有效有额度/有效无额度”拆分为 `auths_dir` 与 `auths_no_quota_dir`。
+3. **稳定性修复**：新增每小时巡检并发锁，避免重叠执行导致统计波动。
+4. **无效文件策略升级**：无效文件不直接删，统一入 `auths_invalid_dir` 并附原因，询问用户是否删除。
+5. **多 provider 识别**：对齐 Cli-Proxy-API-Management-Center 类型体系，先识别 provider 再选择验证方式。
+6. **归档接管能力**：支持 ZIP/7z，自动只处理 JSON，忽略代码和其他非 JSON 文件。
+7. **新手零配置体验**：用户只给 JSON 目录即可自动接管；若未提供则按 CPA 线索自动探测 `auth-dir`。
+8. **自动化运维闭环**：固定 3 个定时任务（小时清理/每日学习/每日同步）。
+9. **文档与仓库同步纪律**：任何改动必须同步 SKILL + WORKFLOW + README，并立即中文 commit + push。
+
 ## Learning rationale and evolution notes (must maintain)
 
 Keep this section updated when environment, upstream API behavior, or source project logic changes.
