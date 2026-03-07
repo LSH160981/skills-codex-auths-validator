@@ -29,6 +29,14 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ## 中文
 
+**OpenClaw 的 Codex 认证 JSON 自动化验证技能：每小时清理、ZIP/7z 导入校验、每日 GitHub 学习巡检。**
+
+**只要告诉我 JSON 文件存放的目录，我就能自己工作。**
+
+如果你不说目录：
+- 默认视为可能安装了 `Cli-Proxy-API-Management-Center`
+- 我会根据源代码与部署线索（含 `auth-dir` / Docker 挂载）自动去找对应目录
+
 Codex Auth JSON 自动化验证与清理技能库（OpenClaw Skill）。
 
 ### 项目简介
