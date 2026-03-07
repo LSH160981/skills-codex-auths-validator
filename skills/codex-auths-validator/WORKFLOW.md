@@ -30,18 +30,30 @@
 
 ## 3. 判定规则（已固化）
 
-### 保留（PASS）
+### 自动识别 provider
+
+优先读取 `type/provider`，其次按字段特征推断，覆盖：
+`qwen/kimi/gemini/gemini-cli/aistudio/claude/codex/antigravity/iflow/vertex/unknown`。
+
+### codex 类型
 
 - HTTP `200` 且有额度：保留在 `auths`
 - HTTP `200` 但无额度：保留在 `auths_no_quota`
 - HTTP `429`：限流/额度问题，不等于 token 失效，放 `auths_no_quota`
+- HTTP `401/403`：无效，移入 `auths_invalid`
+
+### 非 codex 类型
+
+- 先做结构有效性校验（必要字段）
+- 结构有效：保留（后续可按 provider 扩展远程验证）
+- 结构无效：移入 `auths_invalid`
 
 ### 无效（INVALID）
 
-- HTTP `401` / `403`：token 或账号权限无效，判定“完全无用”
 - JSON 解析失败（坏文件）
-- 缺少 `access_token` 或 `account_id`
+- 缺少必要字段
 - `._*.json`（AppleDouble 垃圾文件）
+- codex 的 `401/403`
 
 处理策略：
 - 不直接删，先移动到无效目录（默认 `<auths_dir>_invalid`）
@@ -161,7 +173,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 ## 10. 运维建议（已调整）
 
-这个 skill 固定要求有 **两个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）。
+这个 skill 固定要求有 **三个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）。
 
 首次安装应先执行自动探测：
 
@@ -190,6 +202,11 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
    - 定点学习相关仓库和代码变化
    - 检查可变项：路径、JSON 结构、接口、请求头、状态码语义
    - 如有变化，更新 skill 并发送学习总结
+
+3. **每日 00:00 技能同步任务**（上海时区）
+   - 同步仓库：`https://github.com/LSH160981/skills-codex-auths-validator.git`
+   - 拉取最新 skill 内容并覆盖本地 `skills/codex-auths-validator/*`
+   - 如有更新，立即告知用户同步结果
 
 自动化要求（新机器必做）：
 - 启动时先 `cron.list(includeDisabled=true)`
