@@ -267,10 +267,11 @@ Maintain snapshots so future changes can be compared quickly.
 
 For any change related to `codex-auths-validator` (rules, user path handling, API endpoint, headers, cron behavior, workflow, docs, scripts):
 
-1. Update this skill immediately (`SKILL.md` / `WORKFLOW.md` / `scripts/*` as needed).
-2. Commit immediately with a Chinese commit message.
-3. Push immediately to GitHub repository `LSH160981/skills-codex-auths-validator`.
-4. Reply with commit id(s) after push.
+1. Update skill files immediately (`SKILL.md` / `WORKFLOW.md` / `scripts/*` as needed).
+2. Update GitHub-facing documentation immediately (`README.md`) to keep repo usage guide consistent.
+3. Commit immediately with a Chinese commit message.
+4. Push immediately to GitHub repository `LSH160981/skills-codex-auths-validator`.
+5. Reply with commit id(s) after push.
 
 Do not delay bundling changes for later when they affect behavior or operation.
 
