@@ -95,14 +95,17 @@ When user provides a `.zip` file containing JSON auth files:
 
 1. Extract zip into a temporary folder.
 2. Validate extracted `*.json` files with the same decision rules in this skill.
-3. Import only passed files into `/home/docker/CLIProxyAPI/auths`.
-4. Quarantine failed files (invalid JSON, missing fields, 401/403, AppleDouble).
+3. Classify passed files into target folders:
+   - valid + has quota (`200` with available quota) -> `/home/docker/CLIProxyAPI/auths`
+   - valid but no quota (`200` no quota or `429`) -> `/home/docker/CLIProxyAPI/auths_no_quota`
+4. Handle invalid files (invalid JSON, missing fields, `401/403`, AppleDouble) by configured policy (delete or quarantine).
 5. Return import summary:
    - total in zip
-   - passed/imported
-   - failed/quarantined
+   - imported to `auths`
+   - imported to `auths_no_quota`
+   - failed/deleted or failed/quarantined
    - failure reason histogram
-   - imported file list
+   - imported file list (grouped by target folder)
 
 Suggested command sequence:
 
