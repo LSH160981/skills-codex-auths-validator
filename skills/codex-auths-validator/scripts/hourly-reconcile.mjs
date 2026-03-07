@@ -10,6 +10,7 @@ function arg(name, fallback) {
 
 const DIR_QUOTA = arg('dir-quota', '/home/docker/CLIProxyAPI/auths');
 const DIR_NO_QUOTA = arg('dir-no-quota', '/home/docker/CLIProxyAPI/auths_no_quota');
+const DIR_INVALID = arg('dir-invalid', `${DIR_QUOTA}_invalid`);
 const CONCURRENCY = Number(arg('concurrency', '40')) || 40;
 const TIMEOUT_MS = Number(arg('timeout-ms', '12000')) || 12000;
 const LOCK_FILE = arg('lock-file', '/tmp/codex-auths-hourly.lock');
@@ -17,6 +18,7 @@ const REPORT_DIR = arg('report-dir', '/home/docker/CLIProxyAPI/reports');
 
 fs.mkdirSync(DIR_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_NO_QUOTA, { recursive: true });
+fs.mkdirSync(DIR_INVALID, { recursive: true });
 fs.mkdirSync(REPORT_DIR, { recursive: true });
 
 let lockFd;
@@ -29,8 +31,12 @@ try {
 }
 
 function releaseLock() {
-  try { fs.closeSync(lockFd); } catch {}
-  try { fs.unlinkSync(LOCK_FILE); } catch {}
+  try {
+    fs.closeSync(lockFd);
+  } catch {}
+  try {
+    fs.unlinkSync(LOCK_FILE);
+  } catch {}
 }
 
 function listJson(dir) {
@@ -139,7 +145,7 @@ async function worker() {
     const { dir, file } = files[i];
 
     if (file.startsWith('._')) {
-      ops.push({ dir, file, action: 'delete', reason: 'appledouble' });
+      ops.push({ dir, file, action: 'to_invalid', reason: 'appledouble' });
       continue;
     }
 
@@ -148,25 +154,25 @@ async function worker() {
     try {
       json = JSON.parse(fs.readFileSync(full, 'utf8'));
     } catch {
-      ops.push({ dir, file, action: 'delete', reason: 'invalid_json' });
+      ops.push({ dir, file, action: 'to_invalid', reason: 'invalid_json' });
       continue;
     }
 
     if ((json.type || '').toString().toLowerCase() !== 'codex') {
-      ops.push({ dir, file, action: 'delete', reason: 'non_codex' });
+      ops.push({ dir, file, action: 'to_invalid', reason: 'non_codex' });
       continue;
     }
 
     const token = (json.access_token || '').toString().trim();
     const account = (json.account_id || '').toString().trim();
     if (!token || !account) {
-      ops.push({ dir, file, action: 'delete', reason: 'missing_token_or_account' });
+      ops.push({ dir, file, action: 'to_invalid', reason: 'missing_token_or_account' });
       continue;
     }
 
     const chk = await validateByApi(token, account);
     if (chk.kind === 'invalid') {
-      ops.push({ dir, file, action: 'delete', reason: chk.reason });
+      ops.push({ dir, file, action: 'to_invalid', reason: chk.reason });
     } else if (chk.kind === 'quota') {
       ops.push({ dir, file, action: 'to_quota', reason: chk.reason });
     } else if (chk.kind === 'no_quota') {
@@ -181,19 +187,23 @@ try {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   const migration = {};
-  const deleteReasons = {};
+  const invalidReasons = {};
   const transientReasons = {};
-  let deleted = 0;
+  const invalidDetails = [];
+  let invalidMoved = 0;
   let keptTransient = 0;
 
   for (const op of ops) {
     const src = path.join(op.dir, op.file);
     if (!fs.existsSync(src)) continue;
 
-    if (op.action === 'delete') {
-      fs.unlinkSync(src);
-      deleted += 1;
-      deleteReasons[op.reason] = (deleteReasons[op.reason] || 0) + 1;
+    if (op.action === 'to_invalid') {
+      const movedName = safeMove(src, DIR_INVALID, op.file);
+      invalidMoved += 1;
+      invalidReasons[op.reason] = (invalidReasons[op.reason] || 0) + 1;
+      invalidDetails.push({ from: op.dir, file: op.file, movedAs: movedName, reason: op.reason });
+      const key = `${op.dir}->${DIR_INVALID}`;
+      migration[key] = (migration[key] || 0) + 1;
       continue;
     }
 
@@ -213,38 +223,52 @@ try {
 
   const finalQuota = listJson(DIR_QUOTA).length;
   const finalNoQuota = listJson(DIR_NO_QUOTA).length;
+  const finalInvalid = listJson(DIR_INVALID).length;
 
   const summary = {
     checkedTotal: files.length,
     finalQuota,
     finalNoQuota,
-    deleted,
+    finalInvalid,
+    invalidMoved,
     migration,
-    deleteReasons,
+    invalidReasons,
     keptTransient,
     transientReasons,
+    invalidDir: DIR_INVALID,
+    invalidDetails,
   };
 
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   fs.writeFileSync(path.join(REPORT_DIR, `hourly-reconcile-${ts}.json`), JSON.stringify(summary, null, 2));
 
   const migrationText = Object.keys(migration).length
-    ? Object.entries(migration).map(([k, v]) => `${k}: ${v}`).join('，')
+    ? Object.entries(migration)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('，')
     : '无';
-  const deleteReasonText = Object.keys(deleteReasons).length
-    ? Object.entries(deleteReasons).map(([k, v]) => `${k}: ${v}`).join('，')
+  const invalidReasonText = Object.keys(invalidReasons).length
+    ? Object.entries(invalidReasons)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('，')
     : '无';
   const transientText = Object.keys(transientReasons).length
-    ? Object.entries(transientReasons).map(([k, v]) => `${k}: ${v}`).join('，')
+    ? Object.entries(transientReasons)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('，')
     : '无';
 
   console.log(`总共检查：${summary.checkedTotal} 个`);
   console.log(`有效有额度（最终在 auths）：${summary.finalQuota}`);
   console.log(`有效无额度（最终在 auths_no_quota）：${summary.finalNoQuota}`);
-  console.log(`删除：${summary.deleted}`);
+  console.log(`无效已移入（最终在 auths_invalid）：${summary.invalidMoved}（当前库存 ${summary.finalInvalid}）`);
+  console.log(`无效目录：${summary.invalidDir}`);
   console.log(`目录迁移统计：${migrationText}`);
-  console.log(`删除原因统计：${deleteReasonText}`);
+  console.log(`无效原因统计：${invalidReasonText}`);
   console.log(`临时错误保留：${summary.keptTransient}（${transientText}）`);
+  if (summary.invalidMoved > 0) {
+    console.log('是否删除这些无效JSON？如需删除请回复：删除无效JSON');
+  }
 } finally {
   releaseLock();
 }

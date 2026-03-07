@@ -36,12 +36,16 @@
 - HTTP `200` 但无额度：保留在 `auths_no_quota`
 - HTTP `429`：限流/额度问题，不等于 token 失效，放 `auths_no_quota`
 
-### 移除（REMOVE）
+### 无效（INVALID）
 
 - HTTP `401` / `403`：token 或账号权限无效，判定“完全无用”
 - JSON 解析失败（坏文件）
 - 缺少 `access_token` 或 `account_id`
 - `._*.json`（AppleDouble 垃圾文件）
+
+处理策略：
+- 不直接删，先移动到无效目录（默认 `<auths_dir>_invalid`）
+- 汇总时必须告知用户每个原因的数量，并询问是否删除这些无效 JSON
 
 ### 暂不删除（可复核）
 
