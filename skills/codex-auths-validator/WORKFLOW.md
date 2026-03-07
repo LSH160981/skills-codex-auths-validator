@@ -113,8 +113,11 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 ### 导入策略
 
+- ZIP 导入也必须执行双目录分层：
+  - 有额度 -> `/home/docker/CLIProxyAPI/auths`
+  - 无额度/429 -> `/home/docker/CLIProxyAPI/auths_no_quota`
 - 目标目录重名时自动改名（`__importedN`）避免覆盖
-- 导入结果返回：总数、通过数、失败数、失败原因分布、样本清单
+- 导入结果返回：总数、导入到有额度目录数量、导入到无额度目录数量、失败数、失败原因分布、样本清单
 
 ---
 
