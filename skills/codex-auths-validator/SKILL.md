@@ -254,6 +254,12 @@ When new evidence appears (new GitHub version, API change, user policy change):
   - total in zip: 1000
   - imported: 999
   - failed: 1 (auth_403)
+- Snapshot D: 7z import
+  - total in 7z: 1145
+  - imported to auths: 1145
+  - imported to auths_no_quota: 0
+  - moved to auths_invalid: 0
+  - status: VALID_QUOTA x1145
 
 Maintain snapshots so future changes can be compared quickly.
 
