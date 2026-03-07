@@ -1,6 +1,6 @@
 ---
 name: codex-auths-validator
-description: Validate Codex auth JSON files in user-provided directories using the Codex quota/usage endpoint https://chatgpt.com/backend-api/wham/usage. Use when cleaning useless credentials, importing JSONs from a .zip package, running hourly scheduled validation cleanup, running daily 00:00 GitHub learning checks, separating quota/rate-limit cases from truly invalid tokens, and quarantining removable JSON files.
+description: OpenClaw 的 Codex 认证 JSON 自动化验证技能：每小时清理、ZIP/7z 导入校验、每日 GitHub 学习巡检。只要告诉我 JSON 文件存放目录我就能自动工作；若未提供则默认按 Cli-Proxy-API-Management-Center 源码线索自动探测目录。
 ---
 
 # Codex Auths Validator
@@ -61,6 +61,16 @@ Quarantine location pattern:
 
 Write report file:
 - `_validation_report.json`
+
+## 入口原则（项目主标语）
+
+**OpenClaw 的 Codex 认证 JSON 自动化验证技能：每小时清理、ZIP/7z 导入校验、每日 GitHub 学习巡检。**
+
+**只要告诉我 JSON 文件存放的目录，我就能自己工作。**
+
+如果用户不提供目录：
+- 默认视为用户可能安装了 `Cli-Proxy-API-Management-Center`。
+- 按源项目配置与 Docker 挂载线索自动探测目录（`auth-dir` 优先）。
 
 ## 首次安装引导（降低新用户操作）
 
