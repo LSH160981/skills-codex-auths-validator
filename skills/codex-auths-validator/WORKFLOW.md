@@ -70,6 +70,7 @@
 - `SKILL.md`：任务说明、规则、执行方式
 - `scripts/validate-auths.mjs`：一次性人工校验/清理脚本（支持删除或隔离）
 - `scripts/hourly-reconcile.mjs`：每小时定时任务专用稳定脚本（并发锁 + 临时错误保留）
+- `scripts/discover-auth-dir.mjs`：首次安装自动探测认证目录脚本（优先减少用户手动输入）
 - `WORKFLOW.md`：本文件（完整流程说明）
 
 ---
@@ -156,7 +157,17 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 ## 10. 运维建议（已调整）
 
-这个 skill 固定要求有 **两个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）：
+这个 skill 固定要求有 **两个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）。
+
+首次安装应先执行自动探测：
+
+```bash
+node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
+```
+
+若探测到 `recommended` 路径，直接作为认证目录；仅在探测失败时才向用户提问目录路径。
+
+然后再创建并启用两个任务：
 
 1. **每小时自动校验清理任务**（上海时区，双目录流转）
    - 同时扫描：
