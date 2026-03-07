@@ -377,11 +377,23 @@ This guarantees all required cron jobs auto-appear after skill deployment on any
 
 This skill must work for any user environment, not only `/home/docker/CLIProxyAPI/auths`.
 
+### 通用一条指令能力（新增）
+
+只要用户告诉一个 JSON 存放目录，skill 就必须自动接管并完成工作：
+
+1. 把该目录直接作为 `auths_dir`。
+2. 自动派生并创建：
+   - `auths_no_quota_dir = <auths_dir>_no_quota`
+   - `auths_invalid_dir = <auths_dir>_invalid`
+3. 自动执行校验、分层、无效归档、结果汇总。
+4. 自动创建/修复定时任务（无需用户额外配置细节）。
+
 When user provides a JSON folder path, the skill should:
 1. Accept the path directly as `auths_dir`.
 2. Derive `auths_no_quota_dir` as `<auths_dir>_no_quota` unless user specifies another path.
-3. Create missing target directories automatically.
-4. Run the same validation/migration/delete rules without asking extra setup questions.
+3. Derive `auths_invalid_dir` as `<auths_dir>_invalid` unless user specifies another path.
+4. Create missing target directories automatically.
+5. Run the same validation/migration/archive rules without asking extra setup questions.
 
 If no path is provided, run discovery first; only ask user when discovery has low confidence.
 
