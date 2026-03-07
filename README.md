@@ -2,6 +2,27 @@
 
 # skills-codex-auths-validator
 
+## 一键复制使用（OpenClaw）
+
+> 下面这段可以直接复制给 OpenClaw，让它学习本 skill、立刻执行一次，并创建全部定时任务。
+
+```text
+请安装并学习这个 skill：
+https://github.com/LSH160981/skills-codex-auths-validator
+
+要求你立即执行：
+1) 拉取并学习 skills/codex-auths-validator 全部内容；
+2) 自动探测（或让我指定）JSON 认证目录 auths_dir，并创建 auths_no_quota_dir 与 auths_invalid_dir；
+3) 立刻执行一次全量校验与分层迁移；
+4) 自动创建并启用全部定时任务（上海时区）：
+   - 每小时自动校验清理（hourly-reconcile）
+   - 每日 00:00 GitHub 学习巡检
+   - 每日 00:00 Skill 同步
+5) 把执行结果和创建的 cron job id 全部回报给我。
+```
+
+项目地址：`https://github.com/LSH160981/skills-codex-auths-validator`
+
 中文 | [English](#english)
 
 ---
