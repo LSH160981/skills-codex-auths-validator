@@ -200,7 +200,11 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 
 若探测到 `recommended` 路径，直接作为认证目录；仅在探测失败时才向用户提问目录路径。
 
-若用户直接给出目录路径，则跳过探测，直接使用用户路径作为 `auths_dir`，并自动创建 `<auths_dir>_no_quota`。
+若用户直接给出目录路径，则跳过探测，直接使用用户路径作为 `auths_dir`，并自动创建：
+- `<auths_dir>_no_quota`
+- `<auths_dir>_invalid`
+
+并立即执行一次全量校验分层，随后自动创建/修复定时任务。
 
 然后再创建并启用两个任务：
 
