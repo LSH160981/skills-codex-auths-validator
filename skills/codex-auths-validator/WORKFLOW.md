@@ -149,12 +149,21 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - 共隔离：`2001`
 - 保留：`3124`
 
-### B. ZIP 导入
+### B. ZIP 导入（历史样本）
 
 - ZIP 内 JSON：`50`
 - 验证通过并导入：`50`
 - 隔离失败：`0`
 - 命中状态：`ok_200 × 50`
+
+### C. 7z 导入（最新）
+
+- 归档类型：`.7z`
+- 总 JSON：`1145`
+- 导入到 `auths`（有效有额度）：`1145`
+- 导入到 `auths_no_quota`（有效无额度）：`0`
+- 移入 `auths_invalid`（无效）：`0`
+- 命中状态：`VALID_QUOTA × 1145`
 
 ---
 
