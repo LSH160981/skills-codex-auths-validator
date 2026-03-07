@@ -432,3 +432,7 @@ If no path is provided, run discovery first; only ask user when discovery has lo
 - 2026-03-07 05:25 UTC：按照指示重新启用并再次尝试重跑，依旧依赖锁判断。最终将任务停用、锁清理和事故日志记录在 SKILL.md，确保后续恢复时可以快速回溯。
 
 记录来源：OpenClaw 日志 + cron.runs + 审查 `/tmp/codex-auths-hourly.lock`。
+
+- 2026-03-07 08:24 UTC：脚本在验证 JSON 时收到 `Failed to load quota: 500 {"detail":"Request timeout"}`。
+  - 采取：确认与调度的 500/timeout 属于瞬时后端超时，按流程把文件保留原位（transient keep），不移出。
+  - 结果：在日志中记录该状态以便后面观察是否重复发生；若持续 500 则需要检查网络/接口稳定性。
