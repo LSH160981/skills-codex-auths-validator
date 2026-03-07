@@ -137,23 +137,36 @@ Return a JSON summary including:
 - quarantine path
 - moved samples
 
-## ZIP import workflow
+## Archive import workflow（zip/7z 自动接管）
 
-When user provides a `.zip` file containing JSON auth files:
+When user provides `.zip` or `.7z` package:
 
-1. Extract zip into a temporary folder.
-2. Validate extracted `*.json` files with the same decision rules in this skill.
-3. Classify passed files into target folders:
-   - valid + has quota (`200` with available quota) -> `/home/docker/CLIProxyAPI/auths`
-   - valid but no quota (`200` no quota or `429`) -> `/home/docker/CLIProxyAPI/auths_no_quota`
-4. Handle invalid files (invalid JSON, missing fields, `401/403`, AppleDouble) by configured policy (delete or quarantine).
-5. Return import summary:
-   - total in zip
+1. Auto-extract archive to temp workspace.
+2. Auto-scan all files; only `*.json` enters validation pipeline.
+3. Non-JSON files (code, scripts, docs, binaries, etc.) are ignored and never imported.
+4. Validate JSON files with this skill rules.
+5. Classify to target folders:
+   - valid + has quota -> `auths_dir`
+   - valid but no quota / 429 -> `auths_no_quota_dir`
+   - invalid -> `auths_invalid_dir`
+6. Return summary:
+   - total files in archive
+   - json files processed
+   - non-json files ignored
    - imported to `auths`
    - imported to `auths_no_quota`
-   - failed/deleted or failed/quarantined
-   - failure reason histogram
-   - imported file list (grouped by target folder)
+   - moved to `auths_invalid`
+   - status/reason histogram
+
+Recommended command:
+
+```bash
+node skills/codex-auths-validator/scripts/import-archive.mjs \
+  --archive <package.zip|package.7z> \
+  --dir-quota <auths_dir> \
+  --dir-no-quota <auths_no_quota_dir> \
+  --dir-invalid <auths_invalid_dir>
+```
 
 Suggested command sequence:
 

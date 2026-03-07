@@ -118,24 +118,31 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 ---
 
-## 7. 标准执行流程 B：ZIP 导入验证
+## 7. 标准执行流程 B：压缩包导入验证（ZIP/7z）
 
-适用于“我给你一个 zip，里面全是 JSON，先验证，再导入通过文件”的场景。
+适用于“我给你一个 zip/7z，里面可能混有 JSON 和代码文件”的场景。
 
-1. 解压 zip 到临时目录
-2. 递归收集 zip 内 `*.json`
-3. 按同一验证规则逐个请求接口
-4. 通过文件复制到 `/home/docker/CLIProxyAPI/auths`
-5. 失败文件放临时 quarantine
+1. 解压压缩包到临时目录
+2. 递归扫描全部文件
+3. 仅 `*.json` 进入验证流程（自动接管）
+4. 非 JSON 文件（代码/文本/二进制等）全部忽略（skill 不处理）
+5. JSON 按规则分类落盘：
+   - 有额度 -> `auths_dir`
+   - 无额度/429 -> `auths_no_quota_dir`
+   - 无效 -> `auths_invalid_dir`
 6. 生成 `_import_report.json`
 
 ### 导入策略
 
-- ZIP 导入也必须执行双目录分层：
-  - 有额度 -> `/home/docker/CLIProxyAPI/auths`
-  - 无额度/429 -> `/home/docker/CLIProxyAPI/auths_no_quota`
 - 目标目录重名时自动改名（`__importedN`）避免覆盖
-- 导入结果返回：总数、导入到有额度目录数量、导入到无额度目录数量、失败数、失败原因分布、样本清单
+- 导入结果返回：
+  - 压缩包总文件数
+  - JSON 处理数
+  - 非 JSON 忽略数
+  - 导入到有额度目录数量
+  - 导入到无额度目录数量
+  - 移入无效目录数量
+  - 状态与原因分布
 
 ---
 
