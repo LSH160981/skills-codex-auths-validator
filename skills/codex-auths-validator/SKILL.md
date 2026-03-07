@@ -19,13 +19,38 @@ Validate and clean Codex auth JSON files in a batch.
   - `Chatgpt-Account-Id: <account_id>`
   - `User-Agent: codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal`
 
+## 自动识别与验证范围（对齐原项目多类型能力）
+
+本 skill 会先自动识别 JSON 所属 provider，再决定验证方式：
+
+- 识别优先级：`type` / `provider` 字段 -> 特征字段推断
+- 已覆盖类型（与原项目 `AuthFileType` 对齐）：
+  - `qwen` / `kimi` / `gemini` / `gemini-cli` / `aistudio` / `claude` / `codex` / `antigravity` / `iflow` / `vertex`
+  - `unknown`（无法明确分类时）
+
 ## Decision rules
 
-- `200` 且有额度 -> 放在 `/home/docker/CLIProxyAPI/auths`。
-- `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
-- `429`（限流/额度耗尽）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
-- `401/403`、坏 JSON、缺少 `access_token` / `account_id`、`._*.json` -> 无效，统一移入无效目录（默认 `<auths_dir>_invalid`），并向用户解释无效原因。
-- 非 `200/429/401/403` 默认按无效处理（可通过模式调整）。
+### A) codex 类型（可做远程额度验证）
+- `200` 且有额度 -> 放在 `auths_dir`
+- `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `auths_no_quota_dir`
+- `429`（限流/额度耗尽）-> 放在 `auths_no_quota_dir`
+- `401/403` -> 判定无效，移入 `auths_invalid_dir`
+- `5xx/timeout/network` -> 临时错误，原位保留（不迁移）
+
+### B) 非 codex 类型（先做结构有效性校验）
+- 必要字段满足 -> 结构有效，保留原位（可选后续接入 provider 专用远程验证）
+- 必要字段缺失 / 坏 JSON / `._*.json` -> 判定无效，移入 `auths_invalid_dir`
+
+## 统一状态输出（用于给用户解释“为什么无效”）
+
+- `VALID_QUOTA`：有效且有额度
+- `VALID_NO_QUOTA`：有效但无额度/被限流
+- `INVALID_AUTH`：认证失败（401/403）
+- `INVALID_JSON`：JSON 格式损坏
+- `INVALID_MISSING_FIELDS`：缺少必要字段
+- `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
+- `SCHEMA_VALID_PROVIDER`：非 codex，结构有效（保留）
+- `TRANSIENT_KEEP`：临时错误保留（timeout/network/5xx）
 
 ## Safety mode
 
@@ -269,9 +294,9 @@ When user requires scheduled learning and code tracking:
 
 Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEvent`.
 
-## Mandatory auto-provision on new machine (2 cron jobs)
+## Mandatory auto-provision on new machine (3 cron jobs)
 
-When this skill is installed/used on a new machine, ALWAYS ensure these two cron jobs exist automatically (create if missing, update if exists by name):
+When this skill is installed/used on a new machine, ALWAYS ensure these three cron jobs exist automatically (create if missing, update if exists by name):
 
 ### Job A: Hourly auth validation cleanup
 
@@ -308,6 +333,15 @@ When this skill is installed/used on a new machine, ALWAYS ensure these two cron
   - update this skill when changes are meaningful
   - send daily Chinese learning summary
 
+### Job C: Daily 00:00 skill self-sync (Asia/Shanghai)
+
+- Name: `Codex auths 每日00:00 技能同步（上海）`
+- Schedule: `0 0 * * *` (`Asia/Shanghai`)
+- Behavior:
+  - pull latest updates from `https://github.com/LSH160981/skills-codex-auths-validator.git`
+  - sync `skills/codex-auths-validator/*` to local workspace
+  - if changed, apply immediately and send update summary to user
+
 ### Idempotent enforcement rule
 
 Every time this skill runs in a new environment:
@@ -317,7 +351,7 @@ Every time this skill runs in a new environment:
 4. patch existing jobs via `cron.update` to keep schedule/payload consistent
 5. report ensured job IDs to user
 
-This guarantees both cron jobs auto-appear after skill deployment on any machine.
+This guarantees all required cron jobs auto-appear after skill deployment on any machine.
 
 ## Multi-user path policy (important)
 

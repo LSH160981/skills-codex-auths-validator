@@ -10,9 +10,10 @@ function arg(name, fallback) {
 
 const DIR_QUOTA = arg('dir-quota', '/home/docker/CLIProxyAPI/auths');
 const DIR_NO_QUOTA = arg('dir-no-quota', '/home/docker/CLIProxyAPI/auths_no_quota');
+const DIR_INVALID = arg('dir-invalid', `${DIR_QUOTA}_invalid`);
 const CONCURRENCY = Number(arg('concurrency', '40')) || 40;
 const TIMEOUT_MS = Number(arg('timeout-ms', '12000')) || 12000;
-const INVALID_ACTION = (arg('invalid-action', 'delete') || 'delete').toLowerCase(); // delete|quarantine
+const INVALID_ACTION = (arg('invalid-action', 'quarantine') || 'quarantine').toLowerCase(); // delete|quarantine
 
 const now = new Date();
 const stamp = now.toISOString().replace(/[:.]/g, '-');
@@ -20,6 +21,7 @@ const quarantine = path.join(DIR_QUOTA, `_quarantine_${stamp}`);
 
 fs.mkdirSync(DIR_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_NO_QUOTA, { recursive: true });
+fs.mkdirSync(DIR_INVALID, { recursive: true });
 if (INVALID_ACTION === 'quarantine') fs.mkdirSync(quarantine, { recursive: true });
 
 function listJson(dir) {
@@ -39,6 +41,60 @@ function safeMove(src, dstDir, basename) {
   }
   fs.renameSync(src, dst);
   return name;
+}
+
+const KNOWN = new Set(['qwen', 'kimi', 'gemini', 'gemini-cli', 'aistudio', 'claude', 'codex', 'antigravity', 'iflow', 'vertex']);
+
+function detectProvider(json) {
+  const direct = (json.type || json.provider || '').toString().toLowerCase().trim();
+  if (KNOWN.has(direct)) return direct;
+
+  if (json.access_token && json.account_id) return 'codex';
+  if (typeof json.api_key === 'string' && json.api_key.startsWith('AIza')) return 'gemini';
+  if (typeof json.api_key === 'string' && json.api_key.startsWith('sk-ant-')) return 'claude';
+  if (json.project_id && json.private_key && json.client_email) return 'vertex';
+  if (json.refresh_token && (json.client_id || json.account_id)) return 'qwen';
+  if (json.api_key || json.access_token || json.refresh_token) return 'unknown-token-style';
+  return 'unknown';
+}
+
+function validateSchema(provider, json) {
+  const hasAny = (...keys) => keys.some((k) => {
+    const v = json[k];
+    return typeof v === 'string' ? v.trim().length > 0 : Boolean(v);
+  });
+
+  switch (provider) {
+    case 'codex':
+      return hasAny('access_token') && hasAny('account_id')
+        ? { ok: true }
+        : { ok: false, reason: 'codex_missing_required_fields' };
+    case 'gemini':
+    case 'gemini-cli':
+    case 'aistudio':
+      return hasAny('api_key', 'access_token')
+        ? { ok: true }
+        : { ok: false, reason: `${provider}_missing_required_fields` };
+    case 'claude':
+      return hasAny('api_key', 'x_api_key', 'access_token')
+        ? { ok: true }
+        : { ok: false, reason: 'claude_missing_required_fields' };
+    case 'vertex':
+      return hasAny('project_id') && hasAny('private_key', 'access_token')
+        ? { ok: true }
+        : { ok: false, reason: 'vertex_missing_required_fields' };
+    case 'qwen':
+    case 'kimi':
+    case 'iflow':
+    case 'antigravity':
+      return hasAny('access_token', 'api_key', 'refresh_token')
+        ? { ok: true }
+        : { ok: false, reason: `${provider}_missing_required_fields` };
+    default:
+      return hasAny('access_token', 'api_key', 'refresh_token')
+        ? { ok: true, schemaOnly: true }
+        : { ok: false, reason: 'unknown_provider_missing_required_fields' };
+  }
 }
 
 function getUsedPercents(payload) {
@@ -63,7 +119,7 @@ function hasQuota(payload) {
   return !noQuota;
 }
 
-async function validateByApi(token, account) {
+async function validateCodexByApi(token, account) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -80,27 +136,32 @@ async function validateByApi(token, account) {
 
     const body = await resp.text();
     if (resp.status === 401 || resp.status === 403) {
-      return { ok: false, reason: `auth_${resp.status}` };
+      return { kind: 'invalid', reason: `auth_${resp.status}` };
     }
     if (resp.status === 429) {
-      return { ok: true, quota: false, reason: 'rate_or_quota_429' };
+      return { kind: 'no_quota', reason: 'rate_or_quota_429' };
+    }
+    if (resp.status >= 500) {
+      return { kind: 'transient', reason: `status_${resp.status}` };
     }
     if (resp.status !== 200) {
-      return { ok: false, reason: `status_${resp.status}`, body: body.slice(0, 120) };
+      return { kind: 'transient', reason: `status_${resp.status}` };
     }
 
     let payload;
     try {
       payload = JSON.parse(body);
     } catch {
-      return { ok: false, reason: 'invalid_usage_json' };
+      return { kind: 'transient', reason: 'invalid_usage_json' };
     }
 
-    return { ok: true, quota: hasQuota(payload), reason: 'ok_200' };
+    return hasQuota(payload)
+      ? { kind: 'quota', reason: 'ok_200' }
+      : { kind: 'no_quota', reason: 'ok_200_no_quota' };
   } catch (e) {
     const msg = String(e || '');
-    if (msg.includes('AbortError')) return { ok: false, reason: 'timeout' };
-    return { ok: false, reason: 'network_error' };
+    if (msg.includes('AbortError')) return { kind: 'transient', reason: 'timeout' };
+    return { kind: 'transient', reason: 'network_error' };
   } finally {
     clearTimeout(timer);
   }
@@ -123,7 +184,7 @@ async function worker() {
     const full = path.join(dir, file);
 
     if (file.startsWith('._')) {
-      ops.push({ dir, file, action: 'invalid', reason: 'appledouble' });
+      ops.push({ dir, file, provider: 'unknown', action: 'invalid', reason: 'appledouble', status: 'INVALID_APPLEDOUBLE' });
       continue;
     }
 
@@ -131,32 +192,34 @@ async function worker() {
     try {
       json = JSON.parse(fs.readFileSync(full, 'utf8'));
     } catch {
-      ops.push({ dir, file, action: 'invalid', reason: 'invalid_json' });
+      ops.push({ dir, file, provider: 'unknown', action: 'invalid', reason: 'invalid_json', status: 'INVALID_JSON' });
       continue;
     }
 
-    if ((json.type || '').toString().toLowerCase() !== 'codex') {
-      ops.push({ dir, file, action: 'invalid', reason: 'non_codex' });
+    const provider = detectProvider(json);
+    const schema = validateSchema(provider, json);
+    if (!schema.ok) {
+      ops.push({ dir, file, provider, action: 'invalid', reason: schema.reason, status: 'INVALID_MISSING_FIELDS' });
+      continue;
+    }
+
+    if (provider !== 'codex') {
+      ops.push({ dir, file, provider, action: 'keep', reason: 'schema_valid_provider', status: 'SCHEMA_VALID_PROVIDER' });
       continue;
     }
 
     const token = (json.access_token || '').toString().trim();
     const account = (json.account_id || '').toString().trim();
-    if (!token || !account) {
-      ops.push({ dir, file, action: 'invalid', reason: 'missing_token_or_account' });
-      continue;
-    }
+    const chk = await validateCodexByApi(token, account);
 
-    const chk = await validateByApi(token, account);
-    if (!chk.ok) {
-      ops.push({ dir, file, action: 'invalid', reason: chk.reason });
-      continue;
-    }
-
-    if (chk.quota) {
-      ops.push({ dir, file, action: 'to_quota', reason: chk.reason });
+    if (chk.kind === 'invalid') {
+      ops.push({ dir, file, provider, action: 'invalid', reason: chk.reason, status: 'INVALID_AUTH' });
+    } else if (chk.kind === 'quota') {
+      ops.push({ dir, file, provider, action: 'to_quota', reason: chk.reason, status: 'VALID_QUOTA' });
+    } else if (chk.kind === 'no_quota') {
+      ops.push({ dir, file, provider, action: 'to_no_quota', reason: chk.reason, status: 'VALID_NO_QUOTA' });
     } else {
-      ops.push({ dir, file, action: 'to_no_quota', reason: chk.reason });
+      ops.push({ dir, file, provider, action: 'keep', reason: chk.reason, status: 'TRANSIENT_KEEP' });
     }
   }
 }
@@ -165,12 +228,20 @@ await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
 const migration = {};
 const reasons = {};
+const statusCount = {};
+const providerStats = {};
 let invalidDeleted = 0;
 let invalidQuarantined = 0;
+let invalidMovedToInvalidDir = 0;
 
 for (const op of ops) {
   const src = path.join(op.dir, op.file);
   if (!fs.existsSync(src)) continue;
+
+  statusCount[op.status] = (statusCount[op.status] || 0) + 1;
+  providerStats[op.provider] = providerStats[op.provider] || { total: 0, statuses: {} };
+  providerStats[op.provider].total += 1;
+  providerStats[op.provider].statuses[op.status] = (providerStats[op.provider].statuses[op.status] || 0) + 1;
 
   if (op.action === 'invalid') {
     reasons[op.reason] = (reasons[op.reason] || 0) + 1;
@@ -178,13 +249,13 @@ for (const op of ops) {
       safeMove(src, quarantine, op.file);
       invalidQuarantined += 1;
     } else {
-      fs.unlinkSync(src);
-      invalidDeleted += 1;
+      safeMove(src, DIR_INVALID, op.file);
+      invalidMovedToInvalidDir += 1;
     }
     continue;
   }
 
-  const targetDir = op.action === 'to_quota' ? DIR_QUOTA : DIR_NO_QUOTA;
+  const targetDir = op.action === 'to_quota' ? DIR_QUOTA : op.action === 'to_no_quota' ? DIR_NO_QUOTA : op.dir;
   if (op.dir !== targetDir) {
     safeMove(src, targetDir, op.file);
     const key = `${op.dir}->${targetDir}`;
@@ -192,21 +263,23 @@ for (const op of ops) {
   }
 }
 
-const finalQuota = listJson(DIR_QUOTA).length;
-const finalNoQuota = listJson(DIR_NO_QUOTA).length;
-
 const summary = {
   checkedTotal: files.length,
   final: {
-    auths: finalQuota,
-    auths_no_quota: finalNoQuota,
+    auths: listJson(DIR_QUOTA).length,
+    auths_no_quota: listJson(DIR_NO_QUOTA).length,
+    auths_invalid: listJson(DIR_INVALID).length,
   },
-  deleted: invalidDeleted,
-  quarantined: invalidQuarantined,
+  invalidDeleted,
+  invalidQuarantined,
+  invalidMovedToInvalidDir,
   migration,
   reasons,
+  statusCount,
+  providerStats,
   invalidAction: INVALID_ACTION,
   quarantine: INVALID_ACTION === 'quarantine' ? quarantine : null,
+  invalidDir: DIR_INVALID,
 };
 
 if (INVALID_ACTION === 'quarantine') {
