@@ -33,7 +33,12 @@ Codex Auth JSON 自动化验证与清理技能库（OpenClaw Skill）。
 
 ### 项目简介
 
-这个仓库提供一个可复用的 `codex-auths-validator` 技能，用于批量处理认证 JSON（不只 Codex）：
+这个仓库提供一个可复用的 `codex-auths-validator` 技能，用于批量处理认证 JSON（不只 Codex）。
+
+**通用一条指令能力：**
+> 用户只要告诉一个 JSON 文件目录，skill 就会自动接管（自动创建 no_quota/invalid 目录、自动校验分层、自动创建/修复定时任务）。
+
+用于批量处理认证 JSON：
 
 - 支持多 provider 自动识别：
   - `qwen` / `kimi` / `gemini` / `gemini-cli` / `aistudio` / `claude` / `codex` / `antigravity` / `iflow` / `vertex` / `unknown`
@@ -220,6 +225,13 @@ node skills/codex-auths-validator/scripts/hourly-reconcile.mjs \
 1. Hourly validation cleanup (Asia/Shanghai)
 2. Daily 00:00 GitHub learning check (Asia/Shanghai)
 3. Daily 00:00 skill self-sync (Asia/Shanghai)
+
+### One-line onboarding (copy)
+
+```text
+我的JSON目录是：<你的目录路径>
+请立即接管：自动创建 no_quota/invalid 目录，执行一次全量校验分层，并创建全部定时任务后回报结果。
+```
 
 ### Maintenance
 
