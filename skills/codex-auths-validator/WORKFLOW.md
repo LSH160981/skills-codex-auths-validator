@@ -45,7 +45,7 @@
 
 ### 暂不删除（可复核）
 
-- 网络超时、临时网络错误（默认保守处理）
+- 网络超时、临时网络错误、5xx（默认保守处理，不改目录，只计入“临时错误保留”）
 
 ---
 
@@ -175,6 +175,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - 按任务名查找是否存在
 - 缺失就 `cron.add`
 - 已存在就 `cron.update` 保持规则一致
+- 每小时任务统一调用 `hourly-reconcile.mjs`（含并发锁与临时错误保留策略）
 - 最终向用户报告这两个任务的 job id
 
 ---
