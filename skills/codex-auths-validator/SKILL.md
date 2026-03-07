@@ -1,6 +1,6 @@
 ---
 name: codex-auths-validator
-description: Validate Codex auth JSON files in Linux directory /home/docker/CLIProxyAPI/auths using the Codex quota/usage endpoint https://chatgpt.com/backend-api/wham/usage. Use when cleaning useless credentials, importing JSONs from a .zip package, running hourly scheduled validation cleanup, running daily 00:00 GitHub learning checks, separating quota/rate-limit cases from truly invalid tokens, and quarantining removable JSON files.
+description: Validate Codex auth JSON files in user-provided directories using the Codex quota/usage endpoint https://chatgpt.com/backend-api/wham/usage. Use when cleaning useless credentials, importing JSONs from a .zip package, running hourly scheduled validation cleanup, running daily 00:00 GitHub learning checks, separating quota/rate-limit cases from truly invalid tokens, and quarantining removable JSON files.
 ---
 
 # Codex Auths Validator
@@ -9,9 +9,9 @@ Validate and clean Codex auth JSON files in a batch.
 
 ## Run scope
 
-- Target directories:
-  - `/home/docker/CLIProxyAPI/auths`（有效且有额度）
-  - `/home/docker/CLIProxyAPI/auths_no_quota`（有效但无额度/限流）
+- Target directories（可配置，适配所有用户）：
+  - `auths_dir`：有效且有额度目录（用户提供或自动探测）
+  - `auths_no_quota_dir`：有效但无额度/限流目录（默认 `<auths_dir>_no_quota`）
 - Target files: `*.json`
 - Validation endpoint: `GET https://chatgpt.com/backend-api/wham/usage`
 - Required headers:
@@ -48,7 +48,7 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 ```
 
 2. 优先采用探测结果里的 `recommended` 目录。
-3. 若探测不到可靠目录，才询问用户认证目录路径。
+3. 若探测不到可靠目录，才询问用户认证目录路径（用户说一个路径就直接支持，不要求固定目录）。
 4. 若用户安装了 `Cli-Proxy-API-Management-Center`，优先检查其 `auth-dir` 配置与 Docker 挂载路径。
 5. 自动创建无额度目录：`<auth_dir>_no_quota`。
 6. 首次引导时用中文给用户明确说明：
@@ -232,7 +232,7 @@ Maintain snapshots so future changes can be compared quickly.
 
 ## Required sync policy (codex-auths-validator)
 
-For any change related to `codex-auths-validator` (rules, paths, API endpoint, headers, cron behavior, workflow, docs, scripts):
+For any change related to `codex-auths-validator` (rules, user path handling, API endpoint, headers, cron behavior, workflow, docs, scripts):
 
 1. Update this skill immediately (`SKILL.md` / `WORKFLOW.md` / `scripts/*` as needed).
 2. Commit immediately with a Chinese commit message.
@@ -316,4 +316,16 @@ Every time this skill runs in a new environment:
 5. report ensured job IDs to user
 
 This guarantees both cron jobs auto-appear after skill deployment on any machine.
+
+## Multi-user path policy (important)
+
+This skill must work for any user environment, not only `/home/docker/CLIProxyAPI/auths`.
+
+When user provides a JSON folder path, the skill should:
+1. Accept the path directly as `auths_dir`.
+2. Derive `auths_no_quota_dir` as `<auths_dir>_no_quota` unless user specifies another path.
+3. Create missing target directories automatically.
+4. Run the same validation/migration/delete rules without asking extra setup questions.
+
+If no path is provided, run discovery first; only ask user when discovery has low confidence.
 
