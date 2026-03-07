@@ -24,7 +24,7 @@ Validate and clean Codex auth JSON files in a batch.
 - `200` 且有额度 -> 放在 `/home/docker/CLIProxyAPI/auths`。
 - `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
 - `429`（限流/额度耗尽）-> 放在 `/home/docker/CLIProxyAPI/auths_no_quota`。
-- `401/403`、坏 JSON、缺少 `access_token` / `account_id`、`._*.json` -> 无效（删除或隔离，按模式）。
+- `401/403`、坏 JSON、缺少 `access_token` / `account_id`、`._*.json` -> 无效，统一移入无效目录（默认 `<auths_dir>_invalid`），并向用户解释无效原因。
 - 非 `200/429/401/403` 默认按无效处理（可通过模式调整）。
 
 ## Safety mode
@@ -87,6 +87,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - 供 cron 每小时自动任务调用。
 - 内置并发锁（`/tmp/codex-auths-hourly.lock`）防止重叠执行。
 - 临时错误（timeout/network/5xx）保留原位，避免统计抖动。
+- 无效 JSON 不直接删除，移动到无效目录（默认 `<auths_dir>_invalid`）并输出原因，提示用户是否删除。
 
 典型命令：
 
@@ -94,6 +95,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 node skills/codex-auths-validator/scripts/hourly-reconcile.mjs \
   --dir-quota /home/docker/CLIProxyAPI/auths \
   --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
+  --dir-invalid /home/docker/CLIProxyAPI/auths_invalid \
   --concurrency 40 \
   --timeout-ms 12000
 ```
