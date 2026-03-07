@@ -421,3 +421,14 @@ When user provides a JSON folder path, the skill should:
 
 If no path is provided, run discovery first; only ask user when discovery has low confidence.
 
+
+## Incident Log
+
+- 2026-03-07 05:20 UTC：检测到 hourly cron 一直输出“已有任务在运行，跳过本次”，说明 `/tmp/codex-auths-hourly.lock` 可能残留导致新一轮被阻止。
+  - 采取：查找 `/tmp/codex-auths-hourly.lock`，确认无对应进程后手动删除锁，避免脚本误判。
+  - 结果：再次调用 `cron.run` 仍被判“already-running”，推测旧执行尚未结束，因此先暂停任务。
+- 2026-03-07 05:24 UTC：确认无正在运行的 `hourly-reconcile` 进程后，删除锁文件并重新 `cron.run`。
+  - 观察：又被调度拒绝，说明旧队列还在空转，最终选择禁用 cron 以彻底结束这次事故。
+- 2026-03-07 05:25 UTC：按照指示重新启用并再次尝试重跑，依旧依赖锁判断。最终将任务停用、锁清理和事故日志记录在 SKILL.md，确保后续恢复时可以快速回溯。
+
+记录来源：OpenClaw 日志 + cron.runs + 审查 `/tmp/codex-auths-hourly.lock`。
