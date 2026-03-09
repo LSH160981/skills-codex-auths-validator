@@ -14,6 +14,7 @@ const DIR_INVALID = arg('dir-invalid', `${DIR_QUOTA}_invalid`);
 const CONCURRENCY = Number(arg('concurrency', '40')) || 40;
 const TIMEOUT_MS = Number(arg('timeout-ms', '12000')) || 12000;
 const LOCK_FILE = arg('lock-file', '/tmp/codex-auths-hourly.lock');
+const LOCK_MAX_AGE_MS = Number(arg('lock-max-age-ms', '900000')) || 900000;
 const REPORT_DIR = arg('report-dir', '/home/docker/CLIProxyAPI/reports');
 
 fs.mkdirSync(DIR_QUOTA, { recursive: true });
@@ -22,10 +23,61 @@ fs.mkdirSync(DIR_INVALID, { recursive: true });
 fs.mkdirSync(REPORT_DIR, { recursive: true });
 
 let lockFd;
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readLockInfo() {
+  try {
+    const body = fs.readFileSync(LOCK_FILE, 'utf8');
+    const [pidLine, timeLine] = body.split('\n');
+    const pid = Number(pidLine?.trim());
+    const timestamp = Number(timeLine?.trim()) || 0;
+    if (Number.isFinite(pid) && Number.isFinite(timestamp)) {
+      return { pid, timestamp };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function cleanStaleLock() {
+  if (!fs.existsSync(LOCK_FILE)) return false;
+
+  const info = readLockInfo();
+  if (!info) return false;
+
+  const age = Date.now() - info.timestamp;
+  if (!isProcessAlive(info.pid) || age >= LOCK_MAX_AGE_MS) {
+    try {
+      fs.unlinkSync(LOCK_FILE);
+      console.log('检测到过期锁，已清理，继续启动新任务。');
+      return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
 try {
+  if (fs.existsSync(LOCK_FILE)) {
+    if (!cleanStaleLock()) {
+      console.log('已有任务在运行，跳过本次（避免并发导致统计波动）');
+      process.exit(0);
+    }
+  }
+
   lockFd = fs.openSync(LOCK_FILE, 'wx');
-  fs.writeFileSync(lockFd, `${process.pid}\n`);
-} catch {
+  fs.writeFileSync(lockFd, `${process.pid}\n${Date.now()}\n`);
+} catch (err) {
   console.log('已有任务在运行，跳过本次（避免并发导致统计波动）');
   process.exit(0);
 }
