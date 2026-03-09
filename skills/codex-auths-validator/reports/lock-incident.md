@@ -15,6 +15,20 @@
 - 日志写入 `skills/codex-auths-validator/SKILL.md` 的 Incident Log（已有 3/7 记录，可追加此次 3/9 过程）。
 - 以后每次 `already-running` 先检查 `/tmp/codex-auths-hourly.lock`，确认无进程后再删，避免并行执行导致状态错乱。
 
+## 操作指南：清理 + 恢复流程
+1. 终止旧执行（若存在）
+   - 先查看 `/tmp/codex-auths-hourly.lock`，用 `lsof` / `pgrep` 确保没有 `hourly-reconcile` 进程在跑；若有，等自然结束或 `kill`。
+2. 删除老锁
+   - `rm -f /tmp/codex-auths-hourly.lock`，并检查 `/tmp` 没剩余同名文件。
+3. 手动尝试运行脚本（可选）
+   - `node scripts/hourly-reconcile.mjs --dir-quota ...`；若提示 `already-running`，说明旧队列尚未清空，返回步骤 1。
+4. 暂时禁用 cron
+   - `cron update <id> --enabled false`，防止新的调度在锁未释放前再次启动。
+5. 等待剩余任务释放（建议 2-3 分钟）
+6. 重新启用 cron
+   - `cron update <id> --enabled true`，观察下一次调度是否正常。
+7. 若重新启用后依旧报错，重复上面步骤；若正常，则记录本次处理到报告并提交 `reports/lock-incident.md`。
+
 ## 附录
 - 相关文件：`/tmp/codex-auths-hourly.lock`
 - 脚本：`skills/codex-auths-validator/scripts/hourly-reconcile.mjs`
