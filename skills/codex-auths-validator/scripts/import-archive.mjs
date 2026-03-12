@@ -239,6 +239,48 @@ async function worker() {
     providerHist[r.provider] = (providerHist[r.provider] || 0) + 1;
   }
 
+  // ── 去重：对比 account_id，同一账户只保留第一个，其余移入 invalid ──
+  function listJson(dir) {
+    return fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  }
+  function safeMoveLocal(src, dstDir, basename) {
+    let name = basename;
+    const extName = path.extname(name);
+    const stem = extName ? path.basename(name, extName) : name;
+    let dst = path.join(dstDir, name);
+    let n = 1;
+    while (fs.existsSync(dst)) {
+      name = `${stem}__dup${n}${extName}`;
+      dst = path.join(dstDir, name);
+      n += 1;
+    }
+    fs.renameSync(src, dst);
+  }
+
+  const seenAccounts = new Map();
+  let dedupRemoved = 0;
+
+  for (const scanDir of [DIR_QUOTA, DIR_NO_QUOTA]) {
+    for (const file of listJson(scanDir)) {
+      const full = path.join(scanDir, file);
+      let json;
+      try { json = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { continue; }
+      const account = (json.account_id || '').toString().trim();
+      if (!account) continue;
+      if (seenAccounts.has(account)) {
+        safeMoveLocal(full, DIR_INVALID, file);
+        dedupRemoved += 1;
+        if (scanDir === DIR_QUOTA) importedToAuths -= 1;
+        else importedToNoQuota -= 1;
+        movedToInvalid += 1;
+        reasonHist['duplicate_account_id'] = (reasonHist['duplicate_account_id'] || 0) + 1;
+        statusHist['INVALID_DUPLICATE'] = (statusHist['INVALID_DUPLICATE'] || 0) + 1;
+      } else {
+        seenAccounts.set(account, full);
+      }
+    }
+  }
+
   const report = {
     archive: ARCHIVE,
     archiveType: ext,
@@ -248,6 +290,7 @@ async function worker() {
     importedToAuths,
     importedToNoQuota,
     movedToInvalid,
+    dedupRemoved,
     statusHist,
     reasonHist,
     providerHist,

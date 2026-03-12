@@ -42,9 +42,10 @@ https://github.com/LSH160981/skills-codex-auths-validator
 1. 多 provider 自动识别（qwen/kimi/gemini/claude/codex/vertex/...）
 2. codex 远程验证 + 统一状态体系
 3. 双目录分层（有额度 / 无额度）+ 无效目录归档
-4. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
-5. 每小时稳定巡检（并发锁 + 临时错误保留）
-6. 每日学习巡检 + 每日 skill 同步
+4. **account_id 去重**：自动移除 account 相同的重复文件（保留首个）
+5. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
+6. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重）
+7. 每日学习巡检 + 每日 skill 同步
 
 ### 目录规则
 
@@ -65,7 +66,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 2. 每日 00:00 GitHub 学习巡检
 3. 每日 00:00 Skill 同步
 
-### 关键状态（给用户解释“为什么无效”）
+### 关键状态（给用户解释"为什么无效"）
 
 - `VALID_QUOTA`
 - `VALID_NO_QUOTA`
@@ -73,6 +74,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - `INVALID_JSON`
 - `INVALID_MISSING_FIELDS`
 - `INVALID_APPLEDOUBLE`
+- `INVALID_DUPLICATE`（account_id 重复，移除多余文件）
 - `SCHEMA_VALID_PROVIDER`
 - `TRANSIENT_KEEP`
 
@@ -116,9 +118,10 @@ If path is not provided, it assumes possible `Cli-Proxy-API-Management-Center` d
 1. Multi-provider auto detection (qwen/kimi/gemini/claude/codex/vertex/...)
 2. Codex remote validation + unified status model
 3. Dual-directory classification + invalid directory archive
-4. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
-5. Stable hourly reconcile (lock + transient keep)
-6. Daily learning check + daily skill self-sync
+4. **account_id deduplication**: auto-remove duplicate files with same account (keep first)
+5. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
+6. Stable hourly reconcile (lock + transient keep + auto dedup)
+7. Daily learning check + daily skill self-sync
 
 ### Directory model
 

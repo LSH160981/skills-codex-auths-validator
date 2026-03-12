@@ -28,6 +28,16 @@ Validate and clean Codex auth JSON files in a batch.
   - `qwen` / `kimi` / `gemini` / `gemini-cli` / `aistudio` / `claude` / `codex` / `antigravity` / `iflow` / `vertex`
   - `unknown`（无法明确分类时）
 
+## Deduplication rules（去重规则）
+
+在校验之前，先扫描 `auths_dir` + `auths_no_quota_dir` 所有 JSON，对比 `account_id` 字段：
+- 同一 `account_id` 只保留第一个遇到的文件
+- 其余重复文件直接移入 `auths_invalid_dir`，原因记为 `duplicate_account_id`
+
+此逻辑适用于：
+- `hourly-reconcile.mjs`（每小时校验前自动去重）
+- `import-archive.mjs`（ZIP/7z 导入后、输出报告前自动去重）
+
 ## Decision rules
 
 ### A) codex 类型（可做远程额度验证）
@@ -50,7 +60,7 @@ Validate and clean Codex auth JSON files in a batch.
 - `INVALID_MISSING_FIELDS`：缺少必要字段
 - `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
 - `SCHEMA_VALID_PROVIDER`：非 codex，结构有效（保留）
-- `TRANSIENT_KEEP`：临时错误保留（timeout/network/5xx）
+- `INVALID_DUPLICATE`：account_id 重复，保留首个文件，其余移除
 
 ## Safety mode
 

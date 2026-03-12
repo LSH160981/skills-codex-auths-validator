@@ -181,6 +181,47 @@ async function validateByApi(token, account) {
   }
 }
 
+/**
+ * 去重：扫描多个目录，对比 account_id 字段，保留每个 account 的第一个文件，其余移入 DIR_INVALID。
+ * 返回去重删除数。
+ */
+function deduplicateByAccount(dirs) {
+  const seen = new Map(); // account_id -> { dir, file }
+  const toRemove = [];
+
+  for (const dir of dirs) {
+    for (const file of listJson(dir)) {
+      const full = path.join(dir, file);
+      let json;
+      try {
+        json = JSON.parse(fs.readFileSync(full, 'utf8'));
+      } catch {
+        continue; // 格式错误的在后续流程处理
+      }
+      const account = (json.account_id || '').toString().trim();
+      if (!account) continue;
+
+      if (seen.has(account)) {
+        toRemove.push({ dir, file, account });
+      } else {
+        seen.set(account, { dir, file });
+      }
+    }
+  }
+
+  let removed = 0;
+  for (const { dir, file } of toRemove) {
+    const src = path.join(dir, file);
+    if (fs.existsSync(src)) {
+      safeMove(src, DIR_INVALID, file);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+const dedupRemoved = deduplicateByAccount([DIR_QUOTA, DIR_NO_QUOTA]);
+
 const files = [
   ...listJson(DIR_QUOTA).map((f) => ({ dir: DIR_QUOTA, file: f })),
   ...listJson(DIR_NO_QUOTA).map((f) => ({ dir: DIR_NO_QUOTA, file: f })),
@@ -310,6 +351,7 @@ try {
         .join('，')
     : '无';
 
+  console.log(`重复账户去重删除：${dedupRemoved} 个`);
   console.log(`总共检查：${summary.checkedTotal} 个`);
   console.log(`有效有额度（最终在 auths）：${summary.finalQuota}`);
   console.log(`有效无额度（最终在 auths_no_quota）：${summary.finalNoQuota}`);
