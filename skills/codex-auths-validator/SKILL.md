@@ -320,7 +320,15 @@ From `router-for-me/Cli-Proxy-API-Management-Center`, codex quota UI and logic m
 
 - Auth-files page quota refresh action uses quota loader flow.
 - Codex quota backend endpoint: `https://chatgpt.com/backend-api/wham/usage`.
-- UI labels such as 套餐/Free/周限额/代码审查周限额 are rendered from codex quota config and i18n.
+- **Required Codex usage request header**: `Chatgpt-Account-Id` (resolved from auth file `id_token` payload field `chatgpt_account_id` / `chatgptAccountId`).
+- Usage payload schema (frontend expectation):
+  - `plan_type`
+  - `rate_limit` / `code_review_rate_limit` with `primary_window`/`secondary_window` and `used_percent`, plus `limit_reached`.
+  - `additional_rate_limits[]` (for extra metered features).
+- Auth-files status toggle behavior reverted to a dedicated backend endpoint:
+  - `PATCH /auth-files/status` with body `{ name, disabled }`.
+  - Response contains `{ status, disabled }` and UI uses returned `disabled` to confirm final state.
+- Auth-files UI also treats `status_message` or `statusMessage` as the status message source.
 - 403/404 are rendered as credential/update hints in UI, but operational cleanup here treats 401/403 as invalid credentials and 429 as pass.
 
 ### Mutable inputs (must re-verify when changed)
