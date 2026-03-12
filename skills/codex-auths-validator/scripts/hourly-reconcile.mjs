@@ -17,10 +17,44 @@ const LOCK_FILE = arg('lock-file', '/tmp/codex-auths-hourly.lock');
 const LOCK_MAX_AGE_MS = Number(arg('lock-max-age-ms', '900000')) || 900000;
 const REPORT_DIR = arg('report-dir', '/home/docker/CLIProxyAPI/reports');
 
+// 问题1：限制 reports 目录最大文件数，保留最近3天（72小时=72个文件）
+const MAX_REPORT_FILES = Number(arg('max-report-files', '72')) || 72;
+
 fs.mkdirSync(DIR_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_NO_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_INVALID, { recursive: true });
 fs.mkdirSync(REPORT_DIR, { recursive: true });
+
+// 问题1：启动时清理超出限制的旧 report 文件（按修改时间升序，删除最老的）
+function pruneReportDir() {
+  try {
+    const files = fs.readdirSync(REPORT_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const full = path.join(REPORT_DIR, f);
+        const mtime = fs.statSync(full).mtimeMs;
+        return { file: f, full, mtime };
+      })
+      .sort((a, b) => a.mtime - b.mtime); // 最老的排最前面
+
+    const excess = files.length - MAX_REPORT_FILES;
+    if (excess > 0) {
+      const toDelete = files.slice(0, excess);
+      for (const { full } of toDelete) {
+        try {
+          fs.unlinkSync(full);
+        } catch {
+          // 忽略单个文件删除失败
+        }
+      }
+      console.log(`已清理 ${excess} 个旧 report 文件（保留最近 ${MAX_REPORT_FILES} 个）`);
+    }
+  } catch {
+    // 清理失败不影响主流程
+  }
+}
+
+pruneReportDir();
 
 let lockFd;
 
@@ -184,6 +218,11 @@ async function validateByApi(token, account) {
 /**
  * 去重：扫描多个目录，对比 account_id 字段，保留每个 account 的第一个文件，其余移入 DIR_INVALID。
  * 返回去重删除数。
+ *
+ * 问题4：优先级原则 ——
+ *   dirs 数组传入顺序为 [DIR_QUOTA, DIR_NO_QUOTA]，先扫 DIR_QUOTA 再扫 DIR_NO_QUOTA。
+ *   因此当同一 account 在两个目录都有文件时，保留有额度（DIR_QUOTA）的那个，
+ *   DIR_NO_QUOTA 中的重复项会被移入 DIR_INVALID。
  */
 function deduplicateByAccount(dirs) {
   const seen = new Map(); // account_id -> { dir, file }
@@ -261,6 +300,17 @@ async function worker() {
     if (!token || !account) {
       ops.push({ dir, file, action: 'to_invalid', reason: 'missing_token_or_account' });
       continue;
+    }
+
+    // 问题2：在打 API 之前先检查 expired 字段
+    // 如果 expired 存在且已过期（< 当前时间），直接判定 INVALID_EXPIRED，不打 API
+    const expiredField = (json.expired || '').toString().trim();
+    if (expiredField) {
+      const expiredTime = new Date(expiredField).getTime();
+      if (!isNaN(expiredTime) && expiredTime < Date.now()) {
+        ops.push({ dir, file, action: 'to_invalid', reason: 'INVALID_EXPIRED' });
+        continue;
+      }
     }
 
     const chk = await validateByApi(token, account);
@@ -362,6 +412,10 @@ try {
   console.log(`临时错误保留：${summary.keptTransient}（${transientText}）`);
   if (summary.invalidMoved > 0) {
     console.log('是否删除这些无效JSON？如需删除请回复：删除无效JSON');
+  }
+  // 问题5：invalid 目录积累超过500个时打印警告
+  if (finalInvalid > 500) {
+    console.log(`⚠️ auths_invalid 已积累 ${finalInvalid} 个文件，建议运行清理命令：rm -rf ${DIR_INVALID}/*`);
   }
 } finally {
   releaseLock();

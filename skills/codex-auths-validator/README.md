@@ -41,11 +41,12 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 1. 多 provider 自动识别（qwen/kimi/gemini/claude/codex/vertex/...）
 2. codex 远程验证 + 统一状态体系
-3. 双目录分层（有额度 / 无额度）+ 无效目录归档
-4. **account_id 去重**：自动移除 account 相同的重复文件（保留首个）
-5. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
-6. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重）
-7. 每日学习巡检 + 每日 skill 同步
+3. **过期预检**：先读 `expired` 字段，已过期直接淘汰，不浪费 API 请求
+4. 双目录分层（有额度 / 无额度）+ 无效目录归档
+5. **account_id 去重**：优先保留有额度的 account，自动移除冗余重复文件
+6. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
+7. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重 + report 自动清理）
+8. 每日学习巡检 + 每日 skill 同步
 
 ### 目录规则
 
@@ -71,10 +72,11 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - `VALID_QUOTA`
 - `VALID_NO_QUOTA`
 - `INVALID_AUTH`
+- `INVALID_EXPIRED`（token 已过期，`expired` 字段 < 当前时间，不打 API）
 - `INVALID_JSON`
 - `INVALID_MISSING_FIELDS`
 - `INVALID_APPLEDOUBLE`
-- `INVALID_DUPLICATE`（account_id 重复，移除多余文件）
+- `INVALID_DUPLICATE`（account_id 重复，优先保留有额度的那个）
 - `SCHEMA_VALID_PROVIDER`
 - `TRANSIENT_KEEP`
 
@@ -117,11 +119,12 @@ If path is not provided, it assumes possible `Cli-Proxy-API-Management-Center` d
 
 1. Multi-provider auto detection (qwen/kimi/gemini/claude/codex/vertex/...)
 2. Codex remote validation + unified status model
-3. Dual-directory classification + invalid directory archive
-4. **account_id deduplication**: auto-remove duplicate files with same account (keep first)
-5. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
-6. Stable hourly reconcile (lock + transient keep + auto dedup)
-7. Daily learning check + daily skill self-sync
+3. **Expiry pre-check**: reads `expired` field first; skips API call for already-expired tokens
+4. Dual-directory classification + invalid directory archive
+5. **account_id deduplication**: keeps the quota-bearing account when duplicates exist; moves extras to invalid
+6. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
+7. Stable hourly reconcile (lock + transient keep + auto dedup + report auto-prune)
+8. Daily learning check + daily skill self-sync
 
 ### Directory model
 

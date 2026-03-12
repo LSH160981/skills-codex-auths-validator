@@ -72,6 +72,21 @@ function safeCopy(src, dstDir, basename) {
   return name;
 }
 
+// 问题3：全局 safeMoveDedup，用于去重时移动（rename 语义），替代原来内嵌的 safeMoveLocal
+function safeMoveDedup(src, dstDir, basename) {
+  let name = basename;
+  const extName = path.extname(name);
+  const stem = extName ? path.basename(name, extName) : name;
+  let dst = path.join(dstDir, name);
+  let n = 1;
+  while (fs.existsSync(dst)) {
+    name = `${stem}__dup${n}${extName}`;
+    dst = path.join(dstDir, name);
+    n += 1;
+  }
+  fs.renameSync(src, dst);
+}
+
 const KNOWN = new Set(['qwen', 'kimi', 'gemini', 'gemini-cli', 'aistudio', 'claude', 'codex', 'antigravity', 'iflow', 'vertex']);
 
 function detectProvider(json) {
@@ -128,6 +143,16 @@ async function checkCodex(json) {
   const token = (json.access_token || '').toString().trim();
   const account = (json.account_id || '').toString().trim();
   if (!token || !account) return { status: 'INVALID_MISSING_FIELDS', reason: 'codex_missing_required_fields', target: 'invalid' };
+
+  // 问题2：在打 API 之前先检查 expired 字段
+  // 如果 expired 存在且已过期（< 当前时间），直接判定 INVALID_EXPIRED，不打 API
+  const expiredField = (json.expired || '').toString().trim();
+  if (expiredField) {
+    const expiredTime = new Date(expiredField).getTime();
+    if (!isNaN(expiredTime) && expiredTime < Date.now()) {
+      return { status: 'INVALID_EXPIRED', reason: 'INVALID_EXPIRED', target: 'invalid' };
+    }
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -240,35 +265,23 @@ async function worker() {
   }
 
   // ── 去重：对比 account_id，同一账户只保留第一个，其余移入 invalid ──
-  function listJson(dir) {
-    return fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-  }
-  function safeMoveLocal(src, dstDir, basename) {
-    let name = basename;
-    const extName = path.extname(name);
-    const stem = extName ? path.basename(name, extName) : name;
-    let dst = path.join(dstDir, name);
-    let n = 1;
-    while (fs.existsSync(dst)) {
-      name = `${stem}__dup${n}${extName}`;
-      dst = path.join(dstDir, name);
-      n += 1;
-    }
-    fs.renameSync(src, dst);
-  }
-
+  // 问题3：删除原来内嵌的 listJson / safeMoveLocal 局部函数，
+  //        改用全局 safeMoveDedup（rename 语义）完成去重移动。
+  //        listJson 也已在全局（hourly-reconcile 风格），这里直接内联读取目录。
   const seenAccounts = new Map();
   let dedupRemoved = 0;
 
   for (const scanDir of [DIR_QUOTA, DIR_NO_QUOTA]) {
-    for (const file of listJson(scanDir)) {
+    const files = fs.readdirSync(scanDir).filter((f) => f.endsWith('.json'));
+    for (const file of files) {
       const full = path.join(scanDir, file);
       let json;
       try { json = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { continue; }
       const account = (json.account_id || '').toString().trim();
       if (!account) continue;
       if (seenAccounts.has(account)) {
-        safeMoveLocal(full, DIR_INVALID, file);
+        // 问题3：复用全局 safeMoveDedup 替代局部 safeMoveLocal
+        safeMoveDedup(full, DIR_INVALID, file);
         dedupRemoved += 1;
         if (scanDir === DIR_QUOTA) importedToAuths -= 1;
         else importedToNoQuota -= 1;

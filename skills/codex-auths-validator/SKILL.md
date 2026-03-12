@@ -31,16 +31,39 @@ Validate and clean Codex auth JSON files in a batch.
 ## Deduplication rules（去重规则）
 
 在校验之前，先扫描 `auths_dir` + `auths_no_quota_dir` 所有 JSON，对比 `account_id` 字段：
-- 同一 `account_id` 只保留第一个遇到的文件
-- 其余重复文件直接移入 `auths_invalid_dir`，原因记为 `duplicate_account_id`
+- 扫描顺序：**先扫 `auths_dir`（有额度）再扫 `auths_no_quota_dir`（无额度）**
+- 同一 `account_id` 优先保留有额度的那个；其余重复文件移入 `auths_invalid_dir`，原因记为 `duplicate_account_id`
 
 此逻辑适用于：
 - `hourly-reconcile.mjs`（每小时校验前自动去重）
 - `import-archive.mjs`（ZIP/7z 导入后、输出报告前自动去重）
 
+## Pre-flight expiry check（过期预检）
+
+在调用远程 API 之前，先检查 JSON 文件的 `expired` 字段：
+- 若 `expired` 存在且已过期（时间 < 当前 UTC）→ 直接判定 `INVALID_EXPIRED`，移入 `auths_invalid_dir`，**不发起 API 请求**
+- 若 `expired` 不存在或尚未到期 → 继续走 API 校验
+
+好处：大幅减少无效 API 请求，尤其在批量导入大量过期 token 时。
+
+## Report 文件自动清理（reports 目录）
+
+`hourly-reconcile.mjs` 启动时自动清理旧 report 文件：
+- 默认保留最近 **72 个**（对应约 3 天），可通过 `--max-report-files <n>` 覆盖
+- 按 mtime 升序排列，删除超出数量的最老文件
+- 防止 reports 目录无限膨胀
+
+## Invalid 目录积累警告
+
+当 `auths_invalid` 累积超过 **500 个**文件时，hourly-reconcile 会在报告尾部打印：
+```
+⚠️ auths_invalid 已积累 N 个文件，建议运行清理命令：rm -rf /path/to/auths_invalid/*
+```
+
 ## Decision rules
 
 ### A) codex 类型（可做远程额度验证）
+- `expired` 字段存在且已过期 -> 直接判定 `INVALID_EXPIRED`，不调用 API
 - `200` 且有额度 -> 放在 `auths_dir`
 - `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `auths_no_quota_dir`
 - `429`（限流/额度耗尽）-> 放在 `auths_no_quota_dir`
@@ -56,13 +79,12 @@ Validate and clean Codex auth JSON files in a batch.
 - `VALID_QUOTA`：有效且有额度
 - `VALID_NO_QUOTA`：有效但无额度/被限流
 - `INVALID_AUTH`：认证失败（401/403）
+- `INVALID_EXPIRED`：token 已过期（`expired` 字段 < 当前时间，不打 API）
 - `INVALID_JSON`：JSON 格式损坏
 - `INVALID_MISSING_FIELDS`：缺少必要字段
 - `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
 - `SCHEMA_VALID_PROVIDER`：非 codex，结构有效（保留）
 - `INVALID_DUPLICATE`：account_id 重复，保留首个文件，其余移除
-
-## Safety mode
 
 Move removable files into a timestamped quarantine folder first. Do not hard-delete immediately.
 
