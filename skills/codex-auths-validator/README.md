@@ -110,6 +110,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个（可 `--max-report-files` 配置）
 - **invalid 目录积累警告**：超过 500 个时自动提示清理命令
 - **validate-auths.mjs 与 hourly/import 功能对齐**：加入三层过期检测 + refresh_token 续期 + 去重
+- **续期失败不直接 INVALID（关键修复）**：refresh_token 失效后继续走 API 校验，API 401 才算真死——避免 expired 字段不准导致误判有效 token
 - 强化新手体验：只给 JSON 目录即可自动接管
 - 固化文档纪律：SKILL / WORKFLOW / README 必须同步更新
 

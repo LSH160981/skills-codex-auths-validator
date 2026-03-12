@@ -416,16 +416,17 @@ async function worker() {
 
     let refreshedFlag = false;
 
-    // 优化A+B：用 isTokenExpired 检查（JWT exp > expired > last_refresh+7天）
-    // 如果过期：先尝试 tryRefreshToken 续期
+    // 过期检测（三层）+ refresh_token 续期
+    // 修复：续期失败不直接 INVALID，继续走 API 校验，让 API 说了算（401 才真正失效）
     if (isTokenExpired(json)) {
       const refreshed = await tryRefreshToken(json);
       if (refreshed === 'transient') {
+        // 网络/5xx，保守保留，下次重试
         ops.push({ dir, file, action: 'keep', reason: 'refresh_transient' });
         continue;
       } else if (refreshed === null) {
-        ops.push({ dir, file, action: 'to_invalid', reason: 'INVALID_EXPIRED' });
-        continue;
+        // refresh_token 失效，但 access_token 可能仍有效（OpenAI token 存活时间可能长于 expired 字段）
+        // 继续走 API 校验，由 API 结果决定；不在此处直接判 INVALID_EXPIRED
       } else {
         // 续期成功，写回文件，用新 token 继续走 API 校验
         fs.writeFileSync(full, JSON.stringify(refreshed, null, 2));

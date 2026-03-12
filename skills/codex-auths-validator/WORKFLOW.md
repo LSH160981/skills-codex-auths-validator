@@ -65,7 +65,8 @@ POST https://auth0.openai.com/oauth/token
 }
 
 续期成功 → 写回文件（更新 access_token / expired / last_refresh / id_token），继续 API 校验（reason=refreshed）
-refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 auths_invalid
+refresh_token 失效（null / invalid_grant） → ⚠️ 不直接判 INVALID，继续用原 access_token 走 API 校验
+  → API 返回 401 才判定 INVALID_EXPIRED（access_token 可能比 expired 字段标注时间更长存活）
 网络/5xx → TRANSIENT_KEEP，原位保留，下次重试
 ```
 
@@ -75,7 +76,7 @@ hourly summary 新增 `refreshedCount` 字段统计本轮续期成功数量。
 
 ### codex 类型
 
-- 三层过期检测 → 尝试续期（见上）
+- 三层过期检测 → 尝试续期 → 续期成功用新 token；续期失败用原 token 继续 API → API 401 才判 `INVALID_EXPIRED`
 - HTTP `200` 且有额度：保留在 `auths`
 - HTTP `200` 但无额度：保留在 `auths_no_quota`
 - HTTP `429`：限流/额度问题，不等于 token 失效，放 `auths_no_quota`
@@ -279,7 +280,7 @@ node skills/codex-auths-validator/scripts/import-archive.mjs \
 - `INVALID_JSON`：JSON 格式损坏
 - `INVALID_MISSING_FIELDS`：缺少必要字段（access_token / account_id）
 - `INVALID_AUTH`：认证失败（401/403）
-- `INVALID_EXPIRED`：token 过期且 refresh_token 也失效（三层过期判断后仍无法续期）
+- `INVALID_EXPIRED`：token 过期、refresh_token 失效、且 API 也返回 401（三重确认才丢弃）
 - `INVALID_DUPLICATE`：account_id 重复，优先保留有额度的，其余移入 invalid
 - `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
 - `TRANSIENT_KEEP`：临时错误（网络/5xx/续期失败），原位保留下次重试

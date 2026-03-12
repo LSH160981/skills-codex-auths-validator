@@ -249,16 +249,17 @@ async function checkCodex(json) {
   const account = (json.account_id || '').toString().trim();
   if (!token || !account) return { status: 'INVALID_MISSING_FIELDS', reason: 'codex_missing_required_fields', target: 'invalid' };
 
-  // 优化A+B：用 isTokenExpired 检查（JWT exp > expired > last_refresh+7天）
-  // 如果过期：尝试 tryRefreshToken 续期
+  // 过期检测（三层）+ refresh_token 续期
+  // 修复：续期失败不直接 INVALID，继续走 API 校验，让 API 说了算（401 才真正失效）
   if (isTokenExpired(json)) {
     const refreshed = await tryRefreshToken(json);
     if (refreshed === 'transient') {
       return { status: 'TRANSIENT_KEEP', reason: 'refresh_transient', target: 'no_quota' };
     } else if (refreshed === null) {
-      return { status: 'INVALID_EXPIRED', reason: 'INVALID_EXPIRED', target: 'invalid' };
+      // refresh_token 失效，但 access_token 可能仍有效，继续走 API 校验
+      return checkCodexWithToken(json);
     } else {
-      // 续期成功，用新 json 继续校验（调用方不写回文件，import 流程只读压缩包内容）
+      // 续期成功，用新 json 继续校验
       return checkCodexWithToken(refreshed);
     }
   }

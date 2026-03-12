@@ -61,7 +61,8 @@ POST https://auth0.openai.com/oauth/token
 }
 
 续期成功 → 写回文件（更新 access_token / expired / last_refresh / id_token），继续 API 校验
-refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 invalid
+refresh_token 失效（null / invalid_grant） → ⚠️ 不直接判 INVALID，继续用原 access_token 走 API 校验
+  → API 返回 401 才判定 INVALID_EXPIRED（access_token 可能比 expired 字段标注时间更长存活）
 网络/5xx → TRANSIENT_KEEP，原位保留，下次重试
 ```
 
@@ -84,7 +85,7 @@ refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 i
 ## Decision rules
 
 ### A) codex 类型（可做远程额度验证）
-- 过期检测（三层）→ 尝试 refresh_token 续期 → 续期成功则继续；续期失败 → `INVALID_EXPIRED`
+- 过期检测（三层）→ 尝试 refresh_token 续期 → 续期成功则用新 token；续期失败则用原 token 继续走 API → API 返回 401 才判 `INVALID_EXPIRED`
 - `200` 且有额度 -> 放在 `auths_dir`
 - `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `auths_no_quota_dir`
 - `429`（限流/额度耗尽）-> 放在 `auths_no_quota_dir`
@@ -100,7 +101,7 @@ refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 i
 - `VALID_QUOTA`：有效且有额度
 - `VALID_NO_QUOTA`：有效但无额度/被限流
 - `INVALID_AUTH`：认证失败（401/403）
-- `INVALID_EXPIRED`：token 过期且 refresh_token 也失效（三层过期判断后仍无法续期）
+- `INVALID_EXPIRED`：token 过期、refresh_token 失效、且 API 也返回 401（三重确认才丢弃）
 - `INVALID_JSON`：JSON 格式损坏
 - `INVALID_MISSING_FIELDS`：缺少必要字段
 - `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
@@ -301,6 +302,7 @@ Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEven
 13. **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个，--max-report-files 可配置。
 14. **invalid 目录积累警告**：超过 500 个时打印警告，提示 `rm -rf .../auths_invalid/*` 清理命令。
 15. **validate-auths.mjs 功能对齐**：加入三层过期检测 + refresh_token 续期 + account_id 去重，与 hourly/import 行为一致。
+16. **续期失败不直接 INVALID（关键修复）**：refresh_token 失效时不直接丢弃，继续用原 access_token 走 API 校验——因为 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值。只有 API 返回 401 才最终判定失效。
 
 ## Learning rationale and evolution notes (must maintain)
 
@@ -549,3 +551,10 @@ If no path is provided, run discovery first; only ask user when discovery has lo
     - 恢复指南文档已归档为 `reports/lock-incident.md`。
   - 恢复流程要点：检查锁 -> `lsof`/`pgrep` 确认无进程 -> `rm -f /tmp/codex-auths-hourly.lock` -> 禁用 cron -> 等 2-3 分钟 -> 重新启用。
   - 影响评估：锁增强后，陈旧锁（进程已死或超 15 分钟）会被自动清理，不再阻塞后续执行。
+
+- 2026-03-12 14:59 UTC：三层过期检测误判导致 131 个有效 token 被全部移入 invalid。
+  - 现象：hourly-reconcile 跑完后 auths 和 auths_no_quota 变为 0，131 个文件全入 invalid，原因 INVALID_EXPIRED。
+  - 根因：新增三层过期检测后，`refresh_token` 续期失败时直接判定 `INVALID_EXPIRED`，没有继续走 API 校验。但 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值，导致过期字段显示过期但 API 仍能返回 200。
+  - 修复：`refresh_token` 失效后不再直接 INVALID，继续用原 `access_token` 走 API 校验，只有 API 返回 401 才最终判定 `INVALID_EXPIRED`。适用脚本：`hourly-reconcile.mjs`、`import-archive.mjs`。
+  - 恢复：将 131 个文件移回 auths，重新跑 hourly-reconcile，结果：31 有额度、95 无额度、5 真正 401 失效。
+  - 教训：**过期字段只能做"提前预判"辅助，不能替代 API 校验做最终决策。API 说了算。**
