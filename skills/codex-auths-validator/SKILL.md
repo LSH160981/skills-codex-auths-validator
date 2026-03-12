@@ -277,6 +277,18 @@ When new evidence appears (new GitHub version, API change, user policy change):
 4. Keep success snapshots (counts + key reasons) for regression comparison.
 5. If schedule behavior changes, update cron workflow text too.
 
+### Lock management enhancement (2026-03-09)
+
+`hourly-reconcile.mjs` lock file format was upgraded from `pid\n` to `pid\ntimestamp\n`.
+
+New behavior:
+- `LOCK_MAX_AGE_MS` (default 900000 = 15 min): stale threshold
+- `cleanStaleLock()`: auto-removes lock if owning PID is dead OR lock age ≥ 15 min
+- Prevents permanent cron stall from zombie lock files
+- `--lock-max-age-ms` CLI flag allows override
+
+Key: this means a lock surviving more than 15 minutes will be auto-cleared on next startup — no more manual `rm -f /tmp/codex-auths-hourly.lock` needed.
+
 ### Success snapshots (historical)
 
 - Snapshot A: local auth dir full validation
@@ -436,3 +448,15 @@ If no path is provided, run discovery first; only ask user when discovery has lo
 - 2026-03-07 08:24 UTC：脚本在验证 JSON 时收到 `Failed to load quota: 500 {"detail":"Request timeout"}`。
   - 采取：确认与调度的 500/timeout 属于瞬时后端超时，按流程把文件保留原位（transient keep），不移出。
   - 结果：在日志中记录该状态以便后面观察是否重复发生；若持续 500 则需要检查网络/接口稳定性。
+
+- 2026-03-09 10:53~11:13 UTC：hourly-reconcile 锁故障事件（对应上海时间 2026-03-09 傍晚）。
+  - 现象：cron 任务反复提示"已有任务在运行，跳过本次"，整体校验停摆，Telegram 不再收到巡检结果。
+  - 原因：`/tmp/codex-auths-hourly.lock` 残留（上次执行遗留），锁文件存在但无进程占用。旧版只写 `PID` 无时间戳，无法判断是否为陈旧锁。
+  - 修复（commit 6a3f41d "增强锁管理"）：
+    - `hourly-reconcile.mjs` 现在写入 `pid\ntimestamp` 格式到锁文件。
+    - 新增 `LOCK_MAX_AGE_MS`（默认 900000ms = 15分钟），超龄即视为陈旧锁。
+    - 新增 `isProcessAlive(pid)` 检查锁 PID 是否存活。
+    - 新增 `cleanStaleLock()`：进程不存活 OR 锁年龄 >= 15min，自动清除陈旧锁并继续启动。
+    - 恢复指南文档已归档为 `reports/lock-incident.md`。
+  - 恢复流程要点：检查锁 -> `lsof`/`pgrep` 确认无进程 -> `rm -f /tmp/codex-auths-hourly.lock` -> 禁用 cron -> 等 2-3 分钟 -> 重新启用。
+  - 影响评估：锁增强后，陈旧锁（进程已死或超 15 分钟）会被自动清理，不再阻塞后续执行。
