@@ -1,6 +1,6 @@
 # Codex Auth JSON 批量验证与导入流程（完整封装）
 
-> 目标：把“验证无效 JSON 并清理 + 接收 ZIP 验证后导入”的完整任务流程沉淀为可复用标准。
+> 目标：把"验证无效 JSON 并清理 + 接收 ZIP 验证后导入"的完整任务流程沉淀为可复用标准。
 
 ## 1. 任务背景
 
@@ -35,8 +35,47 @@
 优先读取 `type/provider`，其次按字段特征推断，覆盖：
 `qwen/kimi/gemini/gemini-cli/aistudio/claude/codex/antigravity/iflow/vertex/unknown`。
 
+### account_id 去重（在 API 校验之前）
+
+扫描 `auths_dir`（有额度）+ `auths_no_quota_dir`（无额度）所有 JSON，对比 `account_id` 字段：
+- **扫描顺序**：先扫 `auths_dir`，再扫 `auths_no_quota_dir`
+- 同一 `account_id` 优先保留有额度的那份；其余重复文件移入 `auths_invalid_dir`，原因记为 `INVALID_DUPLICATE`
+- 适用脚本：`hourly-reconcile.mjs`、`import-archive.mjs`
+
+### 三层过期检测 + refresh_token 自动续期
+
+在调用远程 API 之前，按三层优先级判断 token 是否过期：
+
+```
+优先级（高→低）：
+  1. JWT id_token 里的 exp 字段（Base64 decode，最权威）
+  2. json.expired 字段
+  3. json.last_refresh + 7天（兜底推算，假设 codex token 7天有效期）
+  无法判断 → 默认未过期，继续走 API
+```
+
+**过期后不直接丢弃**，先尝试 `refresh_token` 续期：
+
+```
+POST https://auth0.openai.com/oauth/token
+{
+  grant_type: "refresh_token",
+  client_id: "pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh",
+  refresh_token: <json.refresh_token>
+}
+
+续期成功 → 写回文件（更新 access_token / expired / last_refresh / id_token），继续 API 校验（reason=refreshed）
+refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 auths_invalid
+网络/5xx → TRANSIENT_KEEP，原位保留，下次重试
+```
+
+适用脚本：`hourly-reconcile.mjs`、`import-archive.mjs`、`validate-auths.mjs`。
+
+hourly summary 新增 `refreshedCount` 字段统计本轮续期成功数量。
+
 ### codex 类型
 
+- 三层过期检测 → 尝试续期（见上）
 - HTTP `200` 且有额度：保留在 `auths`
 - HTTP `200` 但无额度：保留在 `auths_no_quota`
 - HTTP `429`：限流/额度问题，不等于 token 失效，放 `auths_no_quota`
@@ -54,28 +93,47 @@
 - 缺少必要字段
 - `._*.json`（AppleDouble 垃圾文件）
 - codex 的 `401/403`
+- token 过期且 refresh_token 也失效（`INVALID_EXPIRED`）
+- account_id 重复（`INVALID_DUPLICATE`）
 
 处理策略：
 - 不直接删，先移动到无效目录（默认 `<auths_dir>_invalid`）
 - 汇总时必须告知用户每个原因的数量，并询问是否删除这些无效 JSON
+- invalid 目录积累超过 **500 个**时打印警告，提示清理命令：
+  ```bash
+  rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
+  ```
 
 ### 暂不删除（可复核）
 
-- 网络超时、临时网络错误、5xx（默认保守处理，不改目录，只计入“临时错误保留”）
+- 网络超时、临时网络错误、5xx（默认保守处理，不改目录，只计入"临时错误保留"）
+
+---
+
+## 3.1 reports 目录自动清理（hourly-reconcile）
+
+`hourly-reconcile.mjs` 启动时自动清理旧 report 文件：
+- 默认保留最近 **72 个**（约 3 天），可通过 `--max-report-files <n>` 覆盖
+- 按 mtime 排序，删除超出数量的最老文件
+- 目的：避免 `reports/` 目录无限膨胀
 
 ---
 
 ## 4. 安全策略
 
-不直接硬删，先隔离到 quarantine 目录：
+不直接硬删，先移动到无效目录：
 
-- `/home/docker/CLIProxyAPI/auths/_quarantine_<timestamp>`
+- `/home/docker/CLIProxyAPI/auths_invalid/`
 
 并自动生成报告：
 
 - `_validation_report.json`
 
-用户确认后才可执行硬删除。
+用户确认后才可执行硬删除：
+
+```bash
+rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
+```
 
 ---
 
@@ -84,8 +142,9 @@
 已创建 skill：`skills/codex-auths-validator/`
 
 - `SKILL.md`：任务说明、规则、执行方式（内部标准）
-- `scripts/validate-auths.mjs`：一次性人工校验/清理脚本（支持删除或隔离）
-- `scripts/hourly-reconcile.mjs`：每小时定时任务专用稳定脚本（并发锁 + 临时错误保留）
+- `scripts/validate-auths.mjs`：一次性人工校验/清理脚本（支持删除或隔离；含三层过期检测+续期+去重）
+- `scripts/hourly-reconcile.mjs`：每小时定时任务专用稳定脚本（并发锁 + 三层过期检测 + 续期 + 去重 + report自动清理 + invalid积累警告）
+- `scripts/import-archive.mjs`：ZIP/7z 导入接管脚本（仅 JSON，自动分层，含三层过期检测+续期+去重）
 - `scripts/discover-auth-dir.mjs`：首次安装自动探测认证目录脚本（优先减少用户手动输入）
 - `WORKFLOW.md`：本文件（完整流程说明）
 - `README.md`：GitHub 对外说明（必须与 SKILL/WORKFLOW 同步更新）
@@ -98,7 +157,7 @@
 2. 先处理 `._*.json` → 直接隔离
 3. 并发调用验证接口（默认并发 40）
 4. 按规则判定 PASS/REMOVE
-5. REMOVE 文件移动到 quarantine
+5. 无效文件移动到 invalid 目录（`<auths_dir>_invalid`）
 6. 输出统计摘要 + 样本 + 报告 JSON
 
 ### 命令
@@ -120,7 +179,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 ## 7. 标准执行流程 B：压缩包导入验证（ZIP/7z）
 
-适用于“我给你一个 zip/7z，里面可能混有 JSON 和代码文件”的场景。
+适用于"我给你一个 zip/7z，里面可能混有 JSON 和代码文件"的场景。
 
 1. 解压压缩包到临时目录
 2. 递归扫描全部文件
@@ -143,6 +202,16 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
   - 导入到无额度目录数量
   - 移入无效目录数量
   - 状态与原因分布
+
+### 命令示例
+
+```bash
+node skills/codex-auths-validator/scripts/import-archive.mjs \
+  --archive /path/to/auths_all---03fa8448.zip \
+  --dir-quota /home/docker/CLIProxyAPI/auths \
+  --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
+  --dir-invalid /home/docker/CLIProxyAPI/auths_invalid
+```
 
 ---
 
@@ -173,18 +242,55 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - 移入 `auths_invalid`（无效）：`0`
 - 命中状态：`VALID_QUOTA × 1145`
 
+### D（Snapshot E）：ZIP 导入 #1（auths_all---03fa8448...zip）
+
+- 总文件：`6302`，JSON：`6301`
+- 导入 auths（有额度）：`34`
+- 导入 auths_no_quota：`99`
+- 移入 auths_invalid：`6168`（原因：INVALID_AUTH 401）
+- 后续手动删除 6168 个 INVALID_AUTH 文件：`rm -rf /home/docker/CLIProxyAPI/auths_invalid/*`
+
+### E（Snapshot F）：ZIP 导入 #2（auths_all---412a6374...zip）
+
+- 总文件：`6302`，JSON：`6301`
+- INVALID_EXPIRED：`6300`，INVALID_MISSING_FIELDS：`1`
+- 导入 auths：`0`，导入 auths_no_quota：`0`
+- 全部移入 auths_invalid，后续手动清空（共 6434 个文件）：`rm -rf /home/docker/CLIProxyAPI/auths_invalid/*`
+
+### Success snapshots（历史对比，用于回归）
+
+- Snapshot A：local auth dir full validation
+  - total: 5125 / kept: 3124 / removed: 2001
+- Snapshot B：zip import #1
+  - total json: 50 / imported: 50
+- Snapshot C：zip import #2
+  - total json: 1000 / imported: 999 / failed: 1 (auth_403)
+- Snapshot D：7z import
+  - total json: 1145 / imported to auths: 1145 / moved to invalid: 0
+- Snapshot E：ZIP import #1（auths_all---03fa8448...zip）
+  - total json: 6301 / imported auths: 34 / imported no_quota: 99 / invalid: 6168 (401)
+- Snapshot F：ZIP import #2（auths_all---412a6374...zip）
+  - total json: 6301 / INVALID_EXPIRED: 6300 / INVALID_MISSING_FIELDS: 1
+
 ---
 
 ## 9. 失败原因分类（建议长期沿用）
 
-- `invalid_json`
-- `missing_token_or_account`
-- `auth_401:<message>`
-- `auth_403:<message>`
-- `appledouble`
-- `timeout`
-- `network_error`
-- `status_<code>`
+- `INVALID_JSON`：JSON 格式损坏
+- `INVALID_MISSING_FIELDS`：缺少必要字段（access_token / account_id）
+- `INVALID_AUTH`：认证失败（401/403）
+- `INVALID_EXPIRED`：token 过期且 refresh_token 也失效（三层过期判断后仍无法续期）
+- `INVALID_DUPLICATE`：account_id 重复，优先保留有额度的，其余移入 invalid
+- `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
+- `TRANSIENT_KEEP`：临时错误（网络/5xx/续期失败），原位保留下次重试
+- `timeout`：请求超时（属于临时错误，原位保留）
+- `status_<code>`：其他非预期 HTTP 状态码
+
+**invalid 目录清理命令：**
+
+```bash
+rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
+```
 
 ---
 
@@ -212,12 +318,18 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
    - 同时扫描：
      - `/home/docker/CLIProxyAPI/auths`（有效且有额度）
      - `/home/docker/CLIProxyAPI/auths_no_quota`（有效但无额度/限流）
+   - 启动时动作：
+     - account_id 去重（先 auths 后 auths_no_quota，重复 → `INVALID_DUPLICATE` 移入 invalid）
+     - reports 目录自动清理（默认保留最近 72 个，可 `--max-report-files` 配置）
    - 判定与动作：
+     - 三层过期检测 → 过期先尝试 refresh_token 续期（成功写回文件，reason=refreshed）
      - `200` 且有额度 -> 放回/保留在 `auths`
      - `200` 但无额度 或 `429` -> 放到 `auths_no_quota`
-     - `401/403`、坏 JSON、缺字段、`._*.json` -> 直接删除
+     - `401/403`、坏 JSON、缺字段、`._*.json`、`INVALID_EXPIRED` -> 移入 `auths_invalid`
+     - `timeout/network/5xx` 等临时错误 -> `TRANSIENT_KEEP` 原位保留，下次重试
    - 下次每小时继续双目录复检，额度恢复则自动移回 `auths`
-   - 完成后给用户发送统计汇总（总检查/有额度/无额度/删除/迁移统计/删除原因）
+   - invalid 目录积累超过 500 个时打印清理警告
+   - 完成后给用户发送统计汇总（总检查/有额度/无额度/invalid迁移/迁移统计/原因统计/refreshedCount/临时错误保留）
 
 2. **每日 00:00 GitHub 学习巡检任务**（上海时区）
    - 定点学习相关仓库和代码变化
@@ -241,10 +353,10 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 
 ## 11. 运行截图使用原则
 
-- 运行截图用于 README 展示“真实执行效果”。
+- 运行截图用于 README 展示"真实执行效果"。
 - 不需要在技能流程里加入 OCR 识别能力。
 - 如需展示，直接把原图放入仓库 `assets/` 并在 README 以图片方式引用。
 
 ## 12. 一句话总结
 
-这套流程已经实现：**可批量验证、可追踪、可回滚、可导入、可复用**，并且严格遵守“额度耗尽保留、token失效移除”的业务规则。
+这套流程已经实现：**可批量验证、可追踪、可回滚、可导入、可复用**，并且严格遵守"额度耗尽保留、token失效移除"的业务规则。

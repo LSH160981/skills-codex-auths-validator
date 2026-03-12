@@ -104,6 +104,12 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - 从直接删除，升级为无效目录归档 + 询问用户是否删除
 - 从手动导入，升级为 ZIP/7z 自动接管与分层
 - 修复每小时任务波动（并发锁 + 临时错误保留）
+- **新增三层JWT过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天（无法判断则继续 API 校验）
+- **新增 refresh_token 自动续期**：过期先尝试续期并写回文件，救回可用账号
+- **account_id 去重**：优先保留有额度账号（先扫 auths 再扫 auths_no_quota），重复移入 invalid
+- **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个（可 `--max-report-files` 配置）
+- **invalid 目录积累警告**：超过 500 个时自动提示清理命令
+- **validate-auths.mjs 与 hourly/import 功能对齐**：加入三层过期检测 + refresh_token 续期 + 去重
 - 强化新手体验：只给 JSON 目录即可自动接管
 - 固化文档纪律：SKILL / WORKFLOW / README 必须同步更新
 

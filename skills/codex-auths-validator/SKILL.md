@@ -32,7 +32,7 @@ Validate and clean Codex auth JSON files in a batch.
 
 在校验之前，先扫描 `auths_dir` + `auths_no_quota_dir` 所有 JSON，对比 `account_id` 字段：
 - 扫描顺序：**先扫 `auths_dir`（有额度）再扫 `auths_no_quota_dir`（无额度）**
-- 同一 `account_id` 优先保留有额度的那个；其余重复文件移入 `auths_invalid_dir`，原因记为 `duplicate_account_id`
+- 同一 `account_id` 优先保留有额度的那个；其余重复文件移入 `auths_invalid_dir`，原因记为 `INVALID_DUPLICATE`
 
 此逻辑适用于：
 - `hourly-reconcile.mjs`（每小时校验前自动去重）
@@ -95,7 +95,7 @@ refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 i
 - 必要字段满足 -> 结构有效，保留原位（可选后续接入 provider 专用远程验证）
 - 必要字段缺失 / 坏 JSON / `._*.json` -> 判定无效，移入 `auths_invalid_dir`
 
-## 统一状态输出（用于给用户解释“为什么无效”）
+## 统一状态输出（用于给用户解释"为什么无效"）
 
 - `VALID_QUOTA`：有效且有额度
 - `VALID_NO_QUOTA`：有效但无额度/被限流
@@ -109,13 +109,18 @@ refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 i
 - `TRANSIENT_KEEP`：临时错误（网络/5xx/续期失败），原位保留下次重试
 - reason=`refreshed`：token 已过期但通过 refresh_token 成功续期并继续校验
 
-Move removable files into a timestamped quarantine folder first. Do not hard-delete immediately.
+Move invalid files into `auths_invalid_dir` (default: `<auths_dir>_invalid`). Do not hard-delete immediately.
 
-Quarantine location pattern:
-- `/home/docker/CLIProxyAPI/auths/_quarantine_<timestamp>`
+Invalid directory location pattern:
+- `/home/docker/CLIProxyAPI/auths_invalid/`
 
 Write report file:
 - `_validation_report.json`
+
+Bulk cleanup command (after user confirmation):
+```bash
+rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
+```
 
 ## 入口原则（项目主标语）
 
@@ -129,7 +134,7 @@ Write report file:
 
 ## 首次安装引导（降低新用户操作）
 
-如果用户第一次使用本 skill，先走“自动发现 + 最少提问”流程：
+如果用户第一次使用本 skill，先走"自动发现 + 最少提问"流程：
 
 1. 先自动探测认证目录（不要一上来就问用户）：
 
@@ -154,7 +159,7 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 
 用途：
 - 手动全量校验、一次性清理、导入前预检。
-- 支持无效文件 `delete` 或 `quarantine` 两种模式。
+- 支持无效文件 `delete` 或 `invalid` 两种模式（`invalid` 表示移动到 `auths_invalid_dir`）。
 
 典型命令：
 
@@ -162,14 +167,14 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 node skills/codex-auths-validator/scripts/validate-auths.mjs \
   --dir-quota /home/docker/CLIProxyAPI/auths \
   --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
-  --invalid-action quarantine \
+  --invalid-action invalid \
   --concurrency 40 \
   --timeout-ms 12000
 ```
 
 `--invalid-action`:
-- `delete`：无效文件直接删除（默认）
-- `quarantine`：无效文件移入 `_quarantine_<timestamp>`
+- `delete`：无效文件直接删除
+- `invalid`：无效文件移入 `auths_invalid_dir`（默认 `<auths_dir>_invalid`）
 
 ### 2) `scripts/hourly-reconcile.mjs`（每小时定时任务专用，稳定版）
 
@@ -199,7 +204,7 @@ Return a JSON summary including:
 - kept count
 - moved-by-validation count
 - reason histogram
-- quarantine path
+- invalid directory path
 - moved samples
 
 ## Archive import workflow（zip/7z 自动接管）
@@ -244,17 +249,17 @@ cp <passed-json-files> /home/docker/CLIProxyAPI/auths/
 
 ## Hard delete (only after confirmation)
 
-After user confirms, delete quarantine and import temp folders:
+After user confirms, delete invalid directory and import temp folders:
 
 ```bash
-rm -rf /home/docker/CLIProxyAPI/auths/_quarantine_<timestamp>
+rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 rm -rf /tmp/codex-auths-import-<timestamp>
 ```
 
-Bulk cleanup command (remove all historical quarantine/import temp folders):
+Bulk cleanup command (remove all historical import temp folders):
 
 ```bash
-for d in /home/docker/CLIProxyAPI/auths/_quarantine_* /tmp/codex-auths-import-*; do
+for d in /tmp/codex-auths-import-*; do
   [ -e "$d" ] && rm -rf "$d"
 done
 ```
@@ -265,7 +270,7 @@ When user asks for hourly auto-clean:
 
 1. Create a cron job (Asia/Shanghai) with `expr: 0 * * * *`.
 2. Each run validates all `*.json` in `/home/docker/CLIProxyAPI/auths`.
-3. Delete all unqualified files directly (no quarantine) based on rules:
+3. Move all unqualified files into `auths_invalid_dir` (no hard delete) based on rules:
    - unqualified: 401/403, malformed JSON, missing token/account_id, `._*.json`
    - qualified: 200/429
 4. Send user summary after each run in Chinese:
@@ -282,14 +287,20 @@ Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEven
 以下为本技能从0到1的关键对话沉淀（用于新维护者快速理解）：
 
 1. **基础能力落地**：先实现 codex JSON 批量验证、失效清理、ZIP 导入。
-2. **双目录分层**：将“有效有额度/有效无额度”拆分为 `auths_dir` 与 `auths_no_quota_dir`。
+2. **双目录分层**：将"有效有额度/有效无额度"拆分为 `auths_dir` 与 `auths_no_quota_dir`。
 3. **稳定性修复**：新增每小时巡检并发锁，避免重叠执行导致统计波动。
 4. **无效文件策略升级**：无效文件不直接删，统一入 `auths_invalid_dir` 并附原因，询问用户是否删除。
 5. **多 provider 识别**：对齐 Cli-Proxy-API-Management-Center 类型体系，先识别 provider 再选择验证方式。
-6. **归档接管能力**：支持 ZIP/7z，自动只处理 JSON，忽略代码和其他非 JSON 文件。
+6. **归档接管能力**：支持 ZIP/7z，自动只处理 JSON，忽略代码和其他非 JSON 文件；新增专用脚本 `import-archive.mjs`。
 7. **新手零配置体验**：用户只给 JSON 目录即可自动接管；若未提供则按 CPA 线索自动探测 `auth-dir`。
 8. **自动化运维闭环**：固定 3 个定时任务（小时清理/每日学习/每日同步）。
 9. **文档与仓库同步纪律**：任何改动必须同步 SKILL + WORKFLOW + README，并立即中文 commit + push。
+10. **三层JWT过期检测**：优先级 JWT id_token exp > expired 字段 > last_refresh+7天，无法判断默认未过期继续 API 校验。
+11. **refresh_token 自动续期**：过期先尝试续期并写回文件救回可用账号；invalid_grant 才 INVALID_EXPIRED；网络错误 TRANSIENT_KEEP。
+12. **account_id 去重**：扫描顺序先有额度后无额度，优先保留有额度账号，重复移入 invalid（INVALID_DUPLICATE）。
+13. **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个，--max-report-files 可配置。
+14. **invalid 目录积累警告**：超过 500 个时打印警告，提示 `rm -rf .../auths_invalid/*` 清理命令。
+15. **validate-auths.mjs 功能对齐**：加入三层过期检测 + refresh_token 续期 + account_id 去重，与 hourly/import 行为一致。
 
 ## Learning rationale and evolution notes (must maintain)
 
@@ -319,7 +330,7 @@ Always re-check these before running bulk cleanup in a new environment:
 1. Auth directory path (default now: `/home/docker/CLIProxyAPI/auths`).
 2. Validation endpoint and required headers.
 3. JSON field schema (`type`, `access_token`, `account_id`).
-4. User policy on quarantine vs direct delete.
+4. User policy on invalid archive vs direct delete.
 5. User policy on timeout/network handling.
 
 ### Learning update protocol
@@ -342,7 +353,7 @@ New behavior:
 - Prevents permanent cron stall from zombie lock files
 - `--lock-max-age-ms` CLI flag allows override
 
-Key: this means a lock surviving more than 15 minutes will be auto-cleared on next startup — no more manual `rm -f /tmp/codex-auths-hourly.lock` needed.
+Key: this means a lock surviving more than 15 minutes will be auto-cleared on next startup - no more manual `rm -f /tmp/codex-auths-hourly.lock` needed.
 
 ### Success snapshots (historical)
 
@@ -364,6 +375,21 @@ Key: this means a lock surviving more than 15 minutes will be auto-cleared on ne
   - imported to auths_no_quota: 0
   - moved to auths_invalid: 0
   - status: VALID_QUOTA x1145
+- Snapshot E: ZIP import #1 (auths_all---03fa8448...zip)
+  - total files: 6302
+  - json files: 6301
+  - imported to auths (quota): 34
+  - imported to auths_no_quota: 99
+  - moved to auths_invalid: 6168 (INVALID_AUTH 401)
+  - post-action: manually deleted 6168 INVALID_AUTH files
+- Snapshot F: ZIP import #2 (auths_all---412a6374...zip)
+  - total files: 6302
+  - json files: 6301
+  - INVALID_EXPIRED: 6300
+  - INVALID_MISSING_FIELDS: 1
+  - imported to auths: 0
+  - imported to auths_no_quota: 0
+  - post-action: manually cleaned auths_invalid (6434 files)
 
 Maintain snapshots so future changes can be compared quickly.
 
@@ -491,9 +517,9 @@ If no path is provided, run discovery first; only ask user when discovery has lo
 
 ## Incident Log
 
-- 2026-03-07 05:20 UTC：检测到 hourly cron 一直输出“已有任务在运行，跳过本次”，说明 `/tmp/codex-auths-hourly.lock` 可能残留导致新一轮被阻止。
+- 2026-03-07 05:20 UTC：检测到 hourly cron 一直输出"已有任务在运行，跳过本次"，说明 `/tmp/codex-auths-hourly.lock` 可能残留导致新一轮被阻止。
   - 采取：查找 `/tmp/codex-auths-hourly.lock`，确认无对应进程后手动删除锁，避免脚本误判。
-  - 结果：再次调用 `cron.run` 仍被判“already-running”，推测旧执行尚未结束，因此先暂停任务。
+  - 结果：再次调用 `cron.run` 仍被判"already-running"，推测旧执行尚未结束，因此先暂停任务。
 - 2026-03-07 05:24 UTC：确认无正在运行的 `hourly-reconcile` 进程后，删除锁文件并重新 `cron.run`。
   - 观察：又被调度拒绝，说明旧队列还在空转，最终选择禁用 cron 以彻底结束这次事故。
 - 2026-03-07 05:25 UTC：按照指示重新启用并再次尝试重跑，依旧依赖锁判断。最终将任务停用、锁清理和事故日志记录在 SKILL.md，确保后续恢复时可以快速回溯。
