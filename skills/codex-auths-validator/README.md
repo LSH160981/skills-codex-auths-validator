@@ -41,12 +41,13 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 1. 多 provider 自动识别（qwen/kimi/gemini/claude/codex/vertex/...）
 2. codex 远程验证 + 统一状态体系
-3. **过期预检**：先读 `expired` 字段，已过期直接淘汰，不浪费 API 请求
-4. 双目录分层（有额度 / 无额度）+ 无效目录归档
-5. **account_id 去重**：优先保留有额度的 account，自动移除冗余重复文件
-6. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
-7. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重 + report 自动清理）
-8. 每日学习巡检 + 每日 skill 同步
+3. **三层过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天，过期不直接丢弃
+4. **refresh_token 自动续期**：过期先尝试换新 token 并写回文件，救回可用账号
+5. 双目录分层（有额度 / 无额度）+ 无效目录归档
+6. **account_id 去重**：优先保留有额度的 account，自动移除冗余重复文件
+7. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
+8. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重 + report 自动清理）
+9. 每日学习巡检 + 每日 skill 同步
 
 ### 目录规则
 
@@ -72,13 +73,14 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - `VALID_QUOTA`
 - `VALID_NO_QUOTA`
 - `INVALID_AUTH`
-- `INVALID_EXPIRED`（token 已过期，`expired` 字段 < 当前时间，不打 API）
+- `INVALID_EXPIRED`（三层过期判断后仍无法续期才丢弃）
 - `INVALID_JSON`
 - `INVALID_MISSING_FIELDS`
 - `INVALID_APPLEDOUBLE`
-- `INVALID_DUPLICATE`（account_id 重复，优先保留有额度的那个）
+- `INVALID_DUPLICATE`（account_id 重复，优先保留有额度的）
 - `SCHEMA_VALID_PROVIDER`
 - `TRANSIENT_KEEP`
+- reason=`refreshed`（token 续期成功，hourly summary 里有 `refreshedCount`）
 
 ### 运行截图（真实执行）
 
@@ -119,12 +121,13 @@ If path is not provided, it assumes possible `Cli-Proxy-API-Management-Center` d
 
 1. Multi-provider auto detection (qwen/kimi/gemini/claude/codex/vertex/...)
 2. Codex remote validation + unified status model
-3. **Expiry pre-check**: reads `expired` field first; skips API call for already-expired tokens
-4. Dual-directory classification + invalid directory archive
-5. **account_id deduplication**: keeps the quota-bearing account when duplicates exist; moves extras to invalid
-6. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
-7. Stable hourly reconcile (lock + transient keep + auto dedup + report auto-prune)
-8. Daily learning check + daily skill self-sync
+3. **3-layer expiry detection**: JWT `exp` → `expired` field → `last_refresh`+7d; never discards blindly
+4. **Auto token refresh**: uses `refresh_token` to renew expired tokens in-place, saving recoverable accounts
+5. Dual-directory classification + invalid directory archive
+6. **account_id deduplication**: keeps the quota-bearing account when duplicates exist
+7. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
+8. Stable hourly reconcile (lock + transient keep + auto dedup + report auto-prune)
+9. Daily learning check + daily skill self-sync
 
 ### Directory model
 

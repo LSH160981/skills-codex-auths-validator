@@ -226,6 +226,28 @@ async function worker() {
 
 await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
+// ── 去重：先扫 DIR_QUOTA（有额度优先），再扫 DIR_NO_QUOTA，同一 account_id 保留有额度的 ──
+{
+  const seenAccounts = new Map();
+  let dedupCount = 0;
+  for (const scanDir of [DIR_QUOTA, DIR_NO_QUOTA]) {
+    for (const file of fs.readdirSync(scanDir).filter((f) => f.endsWith('.json') && !f.startsWith('._'))) {
+      const full = path.join(scanDir, file);
+      let j;
+      try { j = JSON.parse(fs.readFileSync(full, 'utf8')); } catch { continue; }
+      const acc = (j.account_id || '').toString().trim();
+      if (!acc) continue;
+      if (seenAccounts.has(acc)) {
+        safeMove(full, DIR_INVALID, file);
+        dedupCount += 1;
+      } else {
+        seenAccounts.set(acc, full);
+      }
+    }
+  }
+  if (dedupCount > 0) console.error(`[dedup] 去重移除 ${dedupCount} 个重复 account_id 文件`);
+}
+
 const migration = {};
 const reasons = {};
 const statusCount = {};

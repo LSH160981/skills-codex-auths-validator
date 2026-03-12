@@ -9,6 +9,111 @@ function arg(name, fallback) {
   return process.argv[i + 1];
 }
 
+// ─── 公共工具函数 ───────────────────────────────────────────────────────────────
+
+/**
+ * 从 JWT id_token 中提取 payload.exp（Unix 秒）。
+ * 纯手写 base64 decode，无外部依赖。失败返回 null。
+ */
+function getJwtExp(idToken) {
+  try {
+    if (typeof idToken !== 'string') return null;
+    const parts = idToken.split('.');
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = (4 - (b64.length % 4)) % 4;
+    b64 += '='.repeat(pad);
+    const decoded = Buffer.from(b64, 'base64').toString('utf8');
+    const payload = JSON.parse(decoded);
+    return typeof payload.exp === 'number' ? payload.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 判断 token 是否已过期。
+ * 优先级：JWT exp > expired 字段 > last_refresh+7天 > 默认未过期
+ */
+function isTokenExpired(json) {
+  const nowMs = Date.now();
+
+  const jwtExp = getJwtExp(json.id_token);
+  if (jwtExp !== null) {
+    return jwtExp * 1000 < nowMs;
+  }
+
+  const expiredStr = (json.expired || '').toString().trim();
+  if (expiredStr) {
+    const expiredTime = new Date(expiredStr).getTime();
+    if (!isNaN(expiredTime)) return expiredTime < nowMs;
+  }
+
+  const refreshStr = (json.last_refresh || '').toString().trim();
+  if (refreshStr) {
+    const refreshTime = new Date(refreshStr).getTime();
+    if (!isNaN(refreshTime)) return refreshTime + 7 * 24 * 3600 * 1000 < nowMs;
+  }
+
+  return false;
+}
+
+/**
+ * 用 refresh_token 换新的 access_token。
+ * 返回：更新后的 json 对象（成功）| null（refresh_token 也失效）| 'transient'（网络/5xx 临时错误）
+ */
+async function tryRefreshToken(json) {
+  if (!json.refresh_token) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const resp = await fetch('https://auth0.openai.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: 'pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh',
+        refresh_token: json.refresh_token,
+      }),
+      signal: controller.signal,
+    });
+
+    if (resp.status === 401 || resp.status === 403) return null;
+    if (resp.status >= 400 && resp.status < 500) {
+      try {
+        const body = await resp.json();
+        if (body.error === 'invalid_grant' || body.error === 'invalid_token') return null;
+      } catch {}
+      return null;
+    }
+    if (resp.status >= 500) return 'transient';
+    if (resp.status !== 200) return 'transient';
+
+    let data;
+    try { data = await resp.json(); } catch { return 'transient'; }
+
+    if (!data.access_token) return null;
+
+    const updated = { ...json };
+    updated.access_token = data.access_token;
+    updated.last_refresh = new Date().toISOString();
+    if (typeof data.expires_in === 'number') {
+      updated.expired = new Date(Date.now() + data.expires_in * 1000).toISOString();
+    }
+    if (data.id_token) updated.id_token = data.id_token;
+    return updated;
+  } catch (e) {
+    const msg = String(e || '');
+    if (msg.includes('AbortError')) return 'transient';
+    return 'transient';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── 工具函数结束 ────────────────────────────────────────────────────────────────
+
 const ARCHIVE = arg('archive', '');
 if (!ARCHIVE) {
   console.error('缺少参数：--archive <zip|7z 文件路径>');
@@ -144,15 +249,26 @@ async function checkCodex(json) {
   const account = (json.account_id || '').toString().trim();
   if (!token || !account) return { status: 'INVALID_MISSING_FIELDS', reason: 'codex_missing_required_fields', target: 'invalid' };
 
-  // 问题2：在打 API 之前先检查 expired 字段
-  // 如果 expired 存在且已过期（< 当前时间），直接判定 INVALID_EXPIRED，不打 API
-  const expiredField = (json.expired || '').toString().trim();
-  if (expiredField) {
-    const expiredTime = new Date(expiredField).getTime();
-    if (!isNaN(expiredTime) && expiredTime < Date.now()) {
+  // 优化A+B：用 isTokenExpired 检查（JWT exp > expired > last_refresh+7天）
+  // 如果过期：尝试 tryRefreshToken 续期
+  if (isTokenExpired(json)) {
+    const refreshed = await tryRefreshToken(json);
+    if (refreshed === 'transient') {
+      return { status: 'TRANSIENT_KEEP', reason: 'refresh_transient', target: 'no_quota' };
+    } else if (refreshed === null) {
       return { status: 'INVALID_EXPIRED', reason: 'INVALID_EXPIRED', target: 'invalid' };
+    } else {
+      // 续期成功，用新 json 继续校验（调用方不写回文件，import 流程只读压缩包内容）
+      return checkCodexWithToken(refreshed);
     }
   }
+
+  return checkCodexWithToken(json);
+}
+
+async function checkCodexWithToken(json) {
+  const token = (json.access_token || '').toString().trim();
+  const account = (json.account_id || '').toString().trim();
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);

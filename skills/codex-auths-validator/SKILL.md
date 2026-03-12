@@ -38,13 +38,34 @@ Validate and clean Codex auth JSON files in a batch.
 - `hourly-reconcile.mjs`（每小时校验前自动去重）
 - `import-archive.mjs`（ZIP/7z 导入后、输出报告前自动去重）
 
-## Pre-flight expiry check（过期预检）
+## Pre-flight expiry check + 自动续期（Token Refresh）
 
-在调用远程 API 之前，先检查 JSON 文件的 `expired` 字段：
-- 若 `expired` 存在且已过期（时间 < 当前 UTC）→ 直接判定 `INVALID_EXPIRED`，移入 `auths_invalid_dir`，**不发起 API 请求**
-- 若 `expired` 不存在或尚未到期 → 继续走 API 校验
+在调用远程 API 之前，按三层优先级判断 token 是否过期：
 
-好处：大幅减少无效 API 请求，尤其在批量导入大量过期 token 时。
+```
+优先级（高→低）：
+  1. JWT id_token 里的 exp 字段（Base64 decode，最权威）
+  2. json.expired 字段
+  3. json.last_refresh + 7天（兜底推算，假设 codex token 7天有效期）
+  无法判断 → 默认未过期，继续走 API
+```
+
+**过期后不直接丢弃**，而是先尝试用 `refresh_token` 续期：
+
+```
+POST https://auth0.openai.com/oauth/token
+{
+  grant_type: "refresh_token",
+  client_id: "pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh",
+  refresh_token: <json.refresh_token>
+}
+
+续期成功 → 写回文件（更新 access_token / expired / last_refresh / id_token），继续 API 校验
+refresh_token 也失效（null / invalid_grant） → INVALID_EXPIRED，移入 invalid
+网络/5xx → TRANSIENT_KEEP，原位保留，下次重试
+```
+
+此逻辑适用于三个脚本：`hourly-reconcile.mjs`、`import-archive.mjs`、`validate-auths.mjs`。
 
 ## Report 文件自动清理（reports 目录）
 
@@ -63,7 +84,7 @@ Validate and clean Codex auth JSON files in a batch.
 ## Decision rules
 
 ### A) codex 类型（可做远程额度验证）
-- `expired` 字段存在且已过期 -> 直接判定 `INVALID_EXPIRED`，不调用 API
+- 过期检测（三层）→ 尝试 refresh_token 续期 → 续期成功则继续；续期失败 → `INVALID_EXPIRED`
 - `200` 且有额度 -> 放在 `auths_dir`
 - `200` 但无额度（`limit_reached=true` 或 window `used_percent>=100`）-> 放在 `auths_no_quota_dir`
 - `429`（限流/额度耗尽）-> 放在 `auths_no_quota_dir`
@@ -79,12 +100,14 @@ Validate and clean Codex auth JSON files in a batch.
 - `VALID_QUOTA`：有效且有额度
 - `VALID_NO_QUOTA`：有效但无额度/被限流
 - `INVALID_AUTH`：认证失败（401/403）
-- `INVALID_EXPIRED`：token 已过期（`expired` 字段 < 当前时间，不打 API）
+- `INVALID_EXPIRED`：token 过期且 refresh_token 也失效（三层过期判断后仍无法续期）
 - `INVALID_JSON`：JSON 格式损坏
 - `INVALID_MISSING_FIELDS`：缺少必要字段
 - `INVALID_APPLEDOUBLE`：`._*.json` 垃圾文件
 - `SCHEMA_VALID_PROVIDER`：非 codex，结构有效（保留）
-- `INVALID_DUPLICATE`：account_id 重复，保留首个文件，其余移除
+- `INVALID_DUPLICATE`：account_id 重复，优先保留有额度的，其余移除
+- `TRANSIENT_KEEP`：临时错误（网络/5xx/续期失败），原位保留下次重试
+- reason=`refreshed`：token 已过期但通过 refresh_token 成功续期并继续校验
 
 Move removable files into a timestamped quarantine folder first. Do not hard-delete immediately.
 
