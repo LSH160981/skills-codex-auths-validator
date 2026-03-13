@@ -314,8 +314,8 @@ rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 
 `scripts/hourly-run-and-notify.sh` 内置：
 - 运行 `hourly-reconcile.mjs`
-- `curl` 直接调 Telegram Bot API 发结果
-- 日志写入 `/tmp/codex-auths-cron.log`
+- TG 先发**精简摘要**（不刷屏），异常/无效/临时错误时再自动附详细日志文件
+- 日志落盘：`/tmp/codex-auths/hourly-reconcile-*.log`（另有 crontab 运行日志 `/tmp/codex-auths-cron.log`）
 
 ---
 
