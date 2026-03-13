@@ -299,6 +299,26 @@ rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 
 这个 skill 固定要求有 **三个定时任务**，并且在未来安装到其他机器时要**自动出现**（自动检查并补齐）。
 
+### ⚠️ 重要架构决策：每小时校验通知必须用系统 crontab
+
+**OpenClaw cron 不适合"无人值守执行 shell 脚本 + 发 TG"场景：**
+- `isolated agentTurn` 模式：需要独立 agent 有自己的 auth-profiles.json，否则静默失败
+- `main systemEvent` 模式：只入队文字，不保证主 session 实际执行工具调用
+
+**正确做法（已落地）：**
+```bash
+# 新机器安装时执行一次
+(crontab -l 2>/dev/null | grep -v hourly-run-and-notify; \
+ echo "0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
+```
+
+`scripts/hourly-run-and-notify.sh` 内置：
+- 运行 `hourly-reconcile.mjs`
+- `curl` 直接调 Telegram Bot API 发结果
+- 日志写入 `/tmp/codex-auths-cron.log`
+
+---
+
 首次安装应先执行自动探测：
 
 ```bash
@@ -363,3 +383,41 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 ## 12. 一句话总结
 
 这套流程已经实现：**可批量验证、可追踪、可回滚、可导入、可复用**，并且严格遵守"额度耗尽保留、token失效移除"的业务规则。
+
+---
+
+## 13. 事故复盘与架构教训
+
+### 事故：OpenClaw cron 40小时未发通知（2026-03-12 ~ 2026-03-13）
+
+**时间线：**
+
+```
+阶段1（~20h）：fast-pool isolated agent
+  → 错误：All models failed: 502/timeout
+  → 原因：fast-pool provider（self）全部不可用
+
+阶段2（~10h）：改 agentId=main，仍是 isolated sessionTarget
+  → 错误：No API key found for provider "ak"（x36次）
+  → 原因：isolated session 独立初始化，不继承主 session auth key
+           auth-profiles.json 只有 qwen/minimax，无 ak/self
+
+阶段3（~4h）：改 sessionTarget=main + systemEvent
+  → 状态：status=ok，deliveryStatus=not-requested，durationMs≈14s
+  → 原因：systemEvent 只是把文字推入主 session 消息队列
+           主 session 未必在线，即使在线也不保证处理工具调用
+           14秒是入队耗时，脚本从未被执行
+
+阶段4（修复）：系统 crontab + shell + curl
+  → 彻底绕开 OpenClaw cron delivery 机制
+  → node 脚本直接跑，curl 直接发 TG Bot API
+  → 100% 可靠，不依赖任何 LLM session 或 auth key
+```
+
+**根因总结：**
+> OpenClaw cron 的设计目标是"让 AI agent 定时执行任务"，不是"定时执行 shell 命令"。对于需要稳定执行 shell 脚本 + 发通知的场景，系统 crontab 是唯一可靠选择。
+
+**预防措施（新机器必做）：**
+1. 安装后立即用系统 crontab 设置 `hourly-run-and-notify.sh`
+2. 禁用对应的 OpenClaw cron 任务，避免重复/干扰
+3. 验证方法：手动执行脚本一次，确认 TG 收到消息后再离开

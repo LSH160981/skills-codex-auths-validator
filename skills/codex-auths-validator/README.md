@@ -111,7 +111,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - **invalid 目录积累警告**：超过 500 个时自动提示清理命令
 - **validate-auths.mjs 与 hourly/import 功能对齐**：加入三层过期检测 + refresh_token 续期 + 去重
 - **续期失败不直接 INVALID（关键修复）**：refresh_token 失效后继续走 API 校验，API 401 才算真死——避免 expired 字段不准导致误判有效 token
-- **cron agentId 必须用 main**：isolated agent（如 fast-pool）缺少 auth 配置时会静默失败；所有 cron 任务统一设 `agentId: "main"`，确保 auth 可用
+- **定时通知不依赖 OpenClaw cron（架构决策）**：OpenClaw cron 的 isolated 模式需要独立 auth key；main systemEvent 模式只入队文字不保证执行/投递。"每小时跑脚本+发TG"改用**系统 crontab + shell + curl**（`scripts/hourly-run-and-notify.sh`）最稳定。
 - 强化新手体验：只给 JSON 目录即可自动接管
 - 固化文档纪律：SKILL / WORKFLOW / README 必须同步更新
 

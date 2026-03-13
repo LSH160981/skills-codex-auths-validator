@@ -177,7 +177,24 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - `delete`：无效文件直接删除
 - `invalid`：无效文件移入 `auths_invalid_dir`（默认 `<auths_dir>_invalid`）
 
-### 2) `scripts/hourly-reconcile.mjs`（每小时定时任务专用，稳定版）
+### 3) `scripts/hourly-run-and-notify.sh`（系统 crontab 专用，直发 TG）
+
+用途：
+- 供系统 crontab 每小时调用，**完全不依赖 OpenClaw cron delivery 机制**。
+- 直接运行 `hourly-reconcile.mjs`，用 `curl` 调 Telegram Bot API 把结果发到用户。
+- 这是最稳定的通知方式：不需要 LLM session，不受 auth-profiles.json 影响。
+
+系统 crontab 条目：
+```bash
+0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
+```
+
+安装命令：
+```bash
+(crontab -l 2>/dev/null | grep -v hourly-run-and-notify; echo "0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
+```
+
+### 5) `scripts/hourly-reconcile.mjs`（每小时定时任务专用，稳定版）
 
 用途：
 - 供 cron 每小时自动任务调用。
@@ -304,6 +321,7 @@ Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEven
 15. **validate-auths.mjs 功能对齐**：加入三层过期检测 + refresh_token 续期 + account_id 去重，与 hourly/import 行为一致。
 16. **续期失败不直接 INVALID（关键修复）**：refresh_token 失效时不直接丢弃，继续用原 access_token 走 API 校验——因为 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值。只有 API 返回 401 才最终判定失效。
 17. **cron agentId 必须用 main（运维经验）**：isolated agent（如 fast-pool）需要独立 auth-profiles.json；若未配置则所有 isolated cron job 会静默 auth 失败，无任何运行输出，用户无感知。创建/修复 cron 任务时统一使用 `agentId: "main"`，sessionKey 对应 `agent:main:telegram:direct:<chatId>`。
+18. **定时任务通知必须用系统 crontab + shell + curl（架构决策）**：OpenClaw cron 的两种模式（isolated agentTurn / main systemEvent）均不适合"无人值守执行 shell 脚本+发 TG"场景。isolated 模式需独立 auth key；main systemEvent 只入队文字不保证执行。**正确做法**：系统 crontab 直接跑 shell 脚本，curl 调 Telegram Bot API 发通知，完全不依赖 LLM session。新增 `scripts/hourly-run-and-notify.sh` 封装此逻辑。
 
 ## Learning rationale and evolution notes (must maintain)
 
@@ -567,3 +585,26 @@ If no path is provided, run discovery first; only ask user when discovery has lo
   - 涉及任务：Codex auths 每小时校验 / 模型健康巡检 / GitHub 学习巡检（共 3 个）
   - 教训：**cron isolated job 使用独立 agent 时，必须确认该 agent 目录有有效 auth key，否则会静默失败。优先使用 `agentId: main` 或提前验证 isolated agent 的 auth-profiles.json。**
   - 操作建议：创建/更新 cron 任务时，始终指定 `agentId: "main"` 和对应 `sessionKey: "agent:main:telegram:direct:<chatId>"`，除非明确需要 isolated agent 且已确认其 auth 配置。
+
+- 2026-03-13 01:34~02:27 UTC：OpenClaw cron delivery 机制根本无法可靠执行脚本+发TG，约40小时持续未发通知。
+
+  **事故时间线（三阶段排查）：**
+
+  | 时间 | 阶段 | 现象 | 错误原因 |
+  |------|------|------|---------|
+  | 最初 | fast-pool isolated | 连续 timeout/auth 失败 | fast-pool agent 无 auth key |
+  | 中期 | agentId=main isolated | `No API key found for provider "ak"` x36次 | isolated session 独立创建，读不到主 session auth |
+  | 后期 | sessionTarget=main systemEvent | status=ok, deliveryStatus=not-requested | systemEvent 只入队文字，不保证我实际执行工具调用 |
+
+  **根因分析：**
+  - OpenClaw cron 的 `sessionTarget: isolated` + `payload: agentTurn` 需要独立 LLM session 有自己的 auth key（不继承主 session）
+  - `sessionTarget: main` + `payload: systemEvent` 只是把文字注入主 session 消息队列，但主 session 未必在线处理，durationMs=14秒仅是入队耗时，脚本从未被执行
+  - 两种模式都不适合"无人值守、定时执行 shell 脚本 + 发 TG"场景
+
+  **最终解决方案（已落地）：**
+  - 放弃 OpenClaw cron delivery，改用**系统 crontab** 直接执行
+  - 新增脚本：`scripts/hourly-run-and-notify.sh`（node 跑校验 + curl 直发 TG）
+  - 系统 crontab 条目：`0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1`
+  - OpenClaw cron 任务 `eb8ad007-426f-4061-ba30-5c48c2e7e8da` 已禁用
+
+  **根本教训：需要"定时执行命令 + 直接发通知"的自动化任务，必须用系统 crontab + shell + curl，不要依赖 OpenClaw cron delivery 机制。**
