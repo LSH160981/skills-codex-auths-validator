@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-
 /**
  * 从 JWT id_token 中提取 payload.exp（Unix 秒）。失败返回 null。
  */
@@ -54,6 +53,50 @@ export function writeJsonAtomic(filePath, obj) {
   const tmp = path.join(dir, `.${base}.tmp-${process.pid}-${Date.now()}`);
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
   fs.renameSync(tmp, filePath);
+}
+
+/**
+ * 跨文件系统安全移动：优先 rename，EXDEV 时 fallback copy+unlink。
+ * 返回目标文件名（basename），目标存在时自动加后缀避免覆盖。
+ */
+export function safeMove(src, dstDir, basename) {
+  let name = basename;
+  const ext = path.extname(name);
+  const stem = ext ? path.basename(name, ext) : name;
+  let dst = path.join(dstDir, name);
+  let n = 1;
+  while (fs.existsSync(dst)) {
+    name = `${stem}__moved${n}${ext}`;
+    dst = path.join(dstDir, name);
+    n += 1;
+  }
+  try {
+    fs.renameSync(src, dst);
+  } catch (err) {
+    if (err.code === 'EXDEV') {
+      // 跨设备（如 /tmp → /home/docker），rename 不支持，fallback copy+unlink
+      fs.copyFileSync(src, dst);
+      fs.unlinkSync(src);
+    } else {
+      throw err;
+    }
+  }
+  return name;
+}
+
+/**
+ * 安全列出目录下所有 *.json 文件（排除目录和符号链接，只返回真实普通文件）。
+ */
+export function listJsonFiles(dir) {
+  return fs.readdirSync(dir).filter((f) => {
+    if (!f.endsWith('.json')) return false;
+    try {
+      const stat = fs.lstatSync(path.join(dir, f));
+      return stat.isFile(); // 排除目录、symlink 等
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**

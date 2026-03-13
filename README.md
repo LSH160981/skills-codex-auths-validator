@@ -42,12 +42,13 @@ https://github.com/LSH160981/skills-codex-auths-validator
 1. 多 provider 自动识别（qwen/kimi/gemini/claude/codex/vertex/...）
 2. codex 远程验证 + 统一状态体系
 3. **三层过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天，过期不直接丢弃
-4. **refresh_token 自动续期**：过期先尝试换新 token 并写回文件，救回可用账号
+4. **refresh_token 自动续期**：过期先尝试换新 token 并原子写回文件，救回可用账号
 5. 双目录分层（有额度 / 无额度）+ 无效目录归档
 6. **account_id 去重**：优先保留有额度的 account，自动移除冗余重复文件
 7. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
 8. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重 + report 自动清理）
 9. 每日学习巡检 + 每日 skill 同步
+10. **共享核心库 `lib/codex.mjs`**：三脚本统一复用（token 判断/续期/原子写/跨设备移动/安全列目录）
 
 ### 目录规则
 
@@ -103,18 +104,19 @@ https://github.com/LSH160981/skills-codex-auths-validator
 ![运行截图2](assets/skill-run-02.jpg)
 
 
-### 对话总结（版本演进）
+### 版本演进
 
 - 从 codex 单类型校验，扩展到多 provider 自动识别
 - 从直接删除，升级为无效目录归档 + 询问用户是否删除
 - 从手动导入，升级为 ZIP/7z 自动接管与分层
 - 修复每小时任务波动（并发锁 + 临时错误保留）
-- **新增三层JWT过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天（无法判断则继续 API 校验）
-- **新增 refresh_token 自动续期**：过期先尝试续期并写回文件，救回可用账号
-- **account_id 去重**：优先保留有额度账号（先扫 auths 再扫 auths_no_quota），重复移入 invalid
-- **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个（可 `--max-report-files` 配置）
-- **invalid 目录积累警告**：超过 500 个时自动提示清理命令
-- **validate-auths.mjs 与 hourly/import 功能对齐**：加入三层过期检测 + refresh_token 续期 + 去重
-- **续期失败不直接 INVALID（关键修复）**：refresh_token 失效后继续走 API 校验，API 401 才算真死——避免 expired 字段不准导致误判有效 token
-- **定时通知不依赖 OpenClaw cron（架构决策）**：每小时跑脚本+发TG 改用系统 crontab + shell（`hourly-run-and-notify.sh`）最稳定
+- **新增三层JWT过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天
+- **新增 refresh_token 自动续期**：续期成功原子写回文件，救回可用账号
+- **account_id 去重**：优先保留有额度账号
+- **reports 目录自动清理**：默认保留最近 72 个
+- **定时通知改系统 crontab**：不依赖 OpenClaw cron，最稳定
+- **共享库 `lib/codex.mjs`**：消除三脚本重复逻辑；跨设备移动/原子写/安全列目录统一处理
+- **非 codex 文件不再误入 invalid**：hourly 与 validate-auths 行为一致，schema 有效则保留
+- **TG 消息自动分片**：超 4000 字符改发文件，不再被截断
+- **摘要新增续期数/去重数**：`refreshedCount` / `dedupRemoved` 写入 report 并展示
 

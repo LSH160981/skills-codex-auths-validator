@@ -4,7 +4,8 @@ import path from 'path';
 
 import { arg, numArg } from './lib/args.mjs';
 import { deriveDirsFromAuthDir } from './lib/paths.mjs';
-import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, writeJsonAtomic } from './lib/codex.mjs';
+import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, writeJsonAtomic, safeMove, listJsonFiles } from './lib/codex.mjs';
+import { detectProvider, validateSchemaWithReason } from './lib/provider.mjs';
 
 // 统一入口：只给 --auth-dir（有额度目录 auths）即可运行
 const AUTH_DIR = arg('auth-dir', '');
@@ -132,23 +133,10 @@ function releaseLock() {
 // ─── 工具函数结束 ────────────────────────────────────────────────────────────────
 
 function listJson(dir) {
-  return fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  return listJsonFiles(dir);
 }
 
-function safeMove(src, dstDir, basename) {
-  let name = basename;
-  const ext = path.extname(name);
-  const stem = ext ? path.basename(name, ext) : name;
-  let dst = path.join(dstDir, name);
-  let n = 1;
-  while (fs.existsSync(dst)) {
-    name = `${stem}__moved${n}${ext}`;
-    dst = path.join(dstDir, name);
-    n += 1;
-  }
-  fs.renameSync(src, dst);
-  return name;
-}
+// safeMove 已从 lib/codex.mjs 导入，下方不再重复定义
 
 // validateByApi/hasQuota 等已迁移到 ./lib/codex.mjs（validateCodexUsageByApi）
 
@@ -229,7 +217,15 @@ async function worker() {
     }
 
     if ((json.type || '').toString().toLowerCase() !== 'codex') {
-      ops.push({ dir, file, action: 'to_invalid', reason: 'non_codex' });
+      // 非 codex：用 provider 检测 + schema 校验决定去留
+      // （与 validate-auths.mjs 保持一致，避免把 gemini/claude 等有效凭证误入 invalid）
+      const provider = detectProvider(json);
+      const schema = validateSchemaWithReason(provider, json);
+      if (!schema.ok) {
+        ops.push({ dir, file, action: 'to_invalid', reason: schema.reason || 'non_codex_schema_invalid' });
+      } else {
+        ops.push({ dir, file, action: 'keep', reason: 'schema_valid_provider' });
+      }
       continue;
     }
 
@@ -320,6 +316,7 @@ try {
 
   const summary = {
     checkedTotal: files.length,
+    dedupRemoved,
     finalQuota,
     finalNoQuota,
     finalInvalid,

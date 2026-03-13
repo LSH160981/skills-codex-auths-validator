@@ -577,6 +577,141 @@ When user provides a JSON folder path, the skill should:
 
 If no path is provided, run discovery first; only ask user when discovery has low confidence.
 
+## 设计盲区与边界条件（你可能没想到的地方）
+
+> 以下问题均已在代码中修复或给出处理策略，记录在此供后续维护参考。
+
+### 1. 跨文件系统移动（EXDEV）
+```
+问题：renameSync 在 /tmp → /home/docker 等不同挂载点之间会抛 EXDEV
+影响：所有 safeMove 调用（hourly-reconcile / validate-auths / import-archive）均受影响
+伪代码：
+  try { fs.renameSync(src, dst) }
+  catch (err) {
+    if (err.code === 'EXDEV') {
+      fs.copyFileSync(src, dst)  // 先复制
+      fs.unlinkSync(src)          // 再删源
+    } else throw err
+  }
+修复：已在 lib/codex.mjs#safeMove 统一实现，三脚本共用
+```
+
+### 2. listJson 把目录/符号链接当文件
+```
+问题：readdirSync().filter(.endsWith('.json')) 不检查是否为普通文件
+风险：名为 foo.json 的目录或 symlink 进入流程 → JSON.parse 失败 → 误入 invalid
+     恶意 symlink 指向 /etc/passwd → readFileSync 读取敏感文件
+伪代码：
+  files = readdirSync(dir)
+    .filter(f => f.endsWith('.json'))
+    .filter(f => lstatSync(join(dir, f)).isFile())  // ← 加这一行
+修复：已在 lib/codex.mjs#listJsonFiles 统一实现
+```
+
+### 3. 非 codex 文件在 hourly-reconcile 被误判为 invalid
+```
+问题：旧代码 if type !== 'codex' → to_invalid('non_codex')
+影响：用户 auths 目录里若混有 claude/gemini JSON，每次巡检都被移入 invalid
+修复：改为 detectProvider() + validateSchemaWithReason()
+  schema 有效 → keep（SCHEMA_VALID_PROVIDER，不动位置）
+  schema 无效 → to_invalid（才算真的无效）
+现在与 validate-auths.mjs 的逻辑一致
+```
+
+### 4. dedupRemoved 没写入 report JSON（统计盲区）
+```
+问题：dedup 删除数只 console.log 出来，report JSON 里没有此字段
+影响：hourly-run-and-notify.sh 解析 report 时 DEDUP 永远是 0，TG 摘要数字不准
+修复：report JSON 新增 dedupRemoved 字段；shell 脚本解析时同步读取
+```
+
+### 5. validate-auths.mjs 的 import 语句位于函数定义之后
+```
+问题：ESM 静态 import 应在文件顶部；混在 const/function 之间虽然语义上 Node.js
+     能处理（import 被提升），但工具链（linter/bundler）可能报错或行为异常
+修复：重写 validate-auths.mjs，所有 import 统一移到文件顶部
+```
+
+### 6. Telegram 4096 字符上限
+```
+问题：sendMessage 单条最多 4096 字节，超长静默截断（或 API 400 错误）
+场景：无效原因统计很多时（如 6000 个文件结果），摘要超长
+伪代码：
+  if len(text) > 4000:
+    write text to tmp file
+    sendDocument(tmp_file, caption="消息超长，以文件发送")
+  else:
+    sendMessage(text)
+修复：已在 hourly-run-and-notify.sh#tg_send_text 实现自动分片
+```
+
+### 7. refreshedCount / dedupRemoved 在 TG 摘要中缺失
+```
+问题：shell 脚本只解析了 checkedTotal/finalQuota 等，没有读取 refreshedCount / dedupRemoved
+影响：用户看不到"本次续期了几个 token"，无法感知续期效果
+修复：hourly-run-and-notify.sh 中新增 REFRESHED / DEDUP 字段解析，摘要中展示
+```
+
+### 8. 原子写（writeJsonAtomic）防止写半段崩溃
+```
+问题：续期成功后 writeFileSync 直接写入原文件；若进程中途被 kill，文件变为空或半写
+影响：下次读取该文件 → JSON.parse 失败 → 误判 INVALID_JSON → 有效账号丢失
+伪代码：
+  tmp = file + '.tmp-' + pid + '-' + Date.now()
+  writeFileSync(tmp, data)   // 先写临时文件
+  renameSync(tmp, file)       // 原子替换（同设备内 rename 是原子的）
+修复：已在 lib/codex.mjs#writeJsonAtomic 实现，三脚本共用
+```
+
+### 9. 同一 token 被两个并发 worker 同时 refresh
+```
+问题：同一文件若同时出现在 DIR_QUOTA 和 DIR_NO_QUOTA（去重之前的窗口），
+     两个 worker 同时读取 → 同时 tryRefreshToken → 第一个写回文件
+     第二个写回时覆盖第一个的结果（可能是更旧的 token）
+伪代码（最简防护）：
+  processing = new Set()
+  worker():
+    if fullPath in processing: ops.push({action:'keep', reason:'concurrent_skip'})
+    else:
+      processing.add(fullPath)
+      ... 正常处理 ...
+      processing.delete(fullPath)
+当前状态：去重发生在 dedup 阶段（校验之前），理论上不会有同一文件路径被两个 worker 抢。
+但 DIR_QUOTA 和 DIR_NO_QUOTA 里可能有相同 account_id 的不同文件，各自被处理 → 两个 refresh
+请求 → 两次写回不同文件（实际上互不干扰，因为是两个不同的 fullPath）。
+结论：当前实现安全，不需要加锁。
+```
+
+### 10. import-archive.mjs 子目录同名文件 basename 冲突
+```
+问题：archive 里 a/auth.json 和 b/auth.json 的 basename 都是 auth.json
+     safeCopy 时目标目录里已有同名 → 自动改名为 auth__imported1.json
+     但 result 数组里记的是原始 basename，report 里"样本"对应关系混乱
+建议：result 里额外记录 originalRelPath（在 archive 内的相对路径）
+     这样 report 里展示 "a/auth.json → auth__imported1.json" 更易溯源
+当前状态：实际导入不影响正确性（文件内容正确），只是 report 可读性略差
+```
+
+### 11. reports 目录 mtime 精度导致同批文件排序不稳定
+```
+问题：同一秒内生成的多个 report 文件，sort by mtime 可能顺序不定
+     pruneReportDir 删除"最老"的文件时，可能误删同批的
+建议：report 文件名已含时间戳（hourly-reconcile-2026-03-13T...json），
+     优先按文件名排序（字典序 = 时间序），而不是 mtime
+当前状态：低频场景（每小时1个文件），实际影响极小，记录备查
+```
+
+### 12. lock 文件遗留的 .tmp-PID-ts 临时文件
+```
+问题：writeJsonAtomic 崩溃时（kill -9）.tmp-PID-ts 文件会遗留在目录里
+影响：目录里出现 .auth123.json.tmp-1234-1234567890 等垃圾文件
+建议：可在 hourly-reconcile 启动时扫描并清理 auth 目录里的 .*.tmp-*-* 文件
+伪代码：
+  for f in readdirSync(dir).filter(f => /^\..*\.tmp-\d+-\d+$/.test(f)):
+    unlinkSync(join(dir, f))
+当前状态：未实现，属于低优先级清理项
+```
+
 ## 事故 / Bug / 事故复盘（统一归档）
 
 历史事故与 bug 记录统一归档到：`skills/codex-auths-validator/reports/lock-incident.md`（仓库唯一真相）。

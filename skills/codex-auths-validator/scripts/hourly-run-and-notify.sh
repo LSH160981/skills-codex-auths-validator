@@ -4,28 +4,25 @@ set -euo pipefail
 
 TG_TOKEN="REDACTED_TG_TOKEN"
 TG_CHAT="REDACTED_TG_CHAT"
-
 TMP_DIR="/tmp/codex-auths"
 mkdir -p "$TMP_DIR"
 
-# 防重复：同一时间段被 cron + 手动触发时，只允许一个实例运行
+# ── 防重复（flock） ─────────────────────────────────────────────────────────────
 LOCK_FILE="$TMP_DIR/hourly-run-and-notify.lock"
 exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  exit 0
-fi
+if ! flock -n 9; then exit 0; fi
 
 TS_UTC="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 TS_SH="$(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S Asia/Shanghai")"
-
 OUT_FILE="$TMP_DIR/hourly-reconcile-$(date -u +"%Y%m%dT%H%M%SZ").log"
 
-# 运行校验脚本（捕获 stdout+stderr）
-set +e
 AUTH_DIR="${AUTH_DIR:-/home/docker/CLIProxyAPI/auths}"
 CONCURRENCY="${CONCURRENCY:-40}"
 TIMEOUT_MS="${TIMEOUT_MS:-12000}"
+SEND_DETAIL="${SEND_DETAIL:-0}"       # 1 = 异常+有无效/临时时也发详细日志
 
+# ── 运行校验脚本 ────────────────────────────────────────────────────────────────
+set +e
 OUTPUT=$(node /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-reconcile.mjs \
   --auth-dir "$AUTH_DIR" \
   --concurrency "$CONCURRENCY" \
@@ -35,113 +32,114 @@ set -e
 
 printf "[%s] exit=%s\n\n%s\n" "$TS_UTC" "$RC" "$OUTPUT" > "$OUT_FILE"
 
-# 生成精简摘要：从最新 report JSON 读取（避免解析 OUTPUT 文本误判）
+# ── 从最新 report JSON 读取关键字段（不解析 OUTPUT 文本，避免误判）───────────
 REPORT_DIR="${REPORT_DIR:-$(dirname "$AUTH_DIR")/reports}"
 LATEST_REPORT=$(ls -t "$REPORT_DIR"/hourly-reconcile-*.json 2>/dev/null | head -1 || true)
 
-REPORT_PRUNE=$(echo "$OUTPUT" | awk '/^已清理[[:space:]]*[0-9]+[[:space:]]*个旧 report 文件/ { if (match($0, /已清理[[:space:]]*([0-9]+)/, a)) print a[1]; exit }')
-: "${REPORT_PRUNE:=0}"
-
 # 默认值（report 读不到时不至于炸）
-DEDUP=0
-CHECKED=0
-FINAL_QUOTA=0
-FINAL_NO_QUOTA=0
-INVALID_MOVED=0
-INVALID_STOCK=0
-TRANSIENT=0
-INVALID_REASONS="无"
+DEDUP=0; CHECKED=0; FINAL_QUOTA=0; FINAL_NO_QUOTA=0
+INVALID_MOVED=0; INVALID_STOCK=0; TRANSIENT=0
+REFRESHED=0; INVALID_REASONS="无"
 
 if [ -n "$LATEST_REPORT" ] && [ -s "$LATEST_REPORT" ]; then
   PY_OUT=$(python3 - "$LATEST_REPORT" <<'PY'
-import json,sys
-p=sys.argv[1]
-with open(p,'r',encoding='utf-8') as f:
-  j=json.load(f)
-# 输出 TSV：checked, finalQuota, finalNoQuota, invalidMoved, finalInvalid, keptTransient, invalidReasonsText
-checked=j.get('checkedTotal',0)
-finalQuota=j.get('finalQuota',0)
-finalNoQuota=j.get('finalNoQuota',0)
-invalidMoved=j.get('invalidMoved',0)
-finalInvalid=j.get('finalInvalid',0)
-keptTransient=j.get('keptTransient',0)
-reasons=j.get('invalidReasons',{}) or {}
-reasonsText='无' if not reasons else '，'.join([f"{k}: {v}" for k,v in reasons.items()])
-print(f"{checked}\t{finalQuota}\t{finalNoQuota}\t{invalidMoved}\t{finalInvalid}\t{keptTransient}\t{reasonsText}")
+import json, sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        j = json.load(f)
+    checked      = j.get('checkedTotal', 0)
+    dedup        = j.get('dedupRemoved', 0)
+    refreshed    = j.get('refreshedCount', 0)
+    finalQuota   = j.get('finalQuota', 0)
+    finalNoQuota = j.get('finalNoQuota', 0)
+    invalidMoved = j.get('invalidMoved', 0)
+    finalInvalid = j.get('finalInvalid', 0)
+    transient    = j.get('keptTransient', 0)
+    reasons      = j.get('invalidReasons') or {}
+    reasonsText  = '无' if not reasons else '，'.join(f"{k}:{v}" for k, v in reasons.items())
+    print(f"{checked}\t{dedup}\t{refreshed}\t{finalQuota}\t{finalNoQuota}\t{invalidMoved}\t{finalInvalid}\t{transient}\t{reasonsText}")
+except Exception as e:
+    print(f"0\t0\t0\t0\t0\t0\t0\t0\t读取失败:{e}")
 PY
 ) || PY_OUT=""
 
   if [ -n "$PY_OUT" ]; then
-    CHECKED=$(echo "$PY_OUT" | awk -F'\t' '{print $1}')
-    FINAL_QUOTA=$(echo "$PY_OUT" | awk -F'\t' '{print $2}')
-    FINAL_NO_QUOTA=$(echo "$PY_OUT" | awk -F'\t' '{print $3}')
-    INVALID_MOVED=$(echo "$PY_OUT" | awk -F'\t' '{print $4}')
-    INVALID_STOCK=$(echo "$PY_OUT" | awk -F'\t' '{print $5}')
-    TRANSIENT=$(echo "$PY_OUT" | awk -F'\t' '{print $6}')
-    INVALID_REASONS=$(echo "$PY_OUT" | awk -F'\t' '{print $7}')
+    IFS=$'\t' read -r CHECKED DEDUP REFRESHED FINAL_QUOTA FINAL_NO_QUOTA \
+        INVALID_MOVED INVALID_STOCK TRANSIENT INVALID_REASONS <<< "$PY_OUT"
   fi
 fi
 
 STATUS="OK"
-if [ "$RC" -ne 0 ]; then STATUS="ERROR"; fi
+[ "$RC" -ne 0 ] && STATUS="ERROR"
 
-# 规则：如果两个目录都空（auths 与 auths_no_quota 目录内 json 文件数都为 0），只发极简通知
-# 注意：不能依赖 OUTPUT 文本解析（解析失败会误判为 0）
-Q_COUNT=$(find "$AUTH_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
-NQ_COUNT=$(find "${AUTH_DIR}_no_quota" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
-: "${Q_COUNT:=0}"
-: "${NQ_COUNT:=0}"
+# ── 构造摘要 ────────────────────────────────────────────────────────────────────
+Q_COUNT=$(find "$AUTH_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ') || Q_COUNT=0
+NQ_DIR="${AUTH_DIR}_no_quota"
+NQ_COUNT=$(find "$NQ_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ') || NQ_COUNT=0
 
-if [ "$Q_COUNT" -eq 0 ] && [ "$NQ_COUNT" -eq 0 ]; then
-  SUMMARY=$(printf "Codex auths 每小时校验：两个目录均为空\nUTC: %s\n上海: %s\nexit=%s\n" "$TS_UTC" "$TS_SH" "$RC")
+if [ "${Q_COUNT:-0}" -eq 0 ] && [ "${NQ_COUNT:-0}" -eq 0 ]; then
+  SUMMARY="Codex auths 每小时校验：两个目录均为空
+UTC: ${TS_UTC}
+上海: ${TS_SH}  exit=${RC}"
 else
-  SUMMARY=$(printf "Codex auths 每小时校验\nUTC: %s\n上海: %s\n结果: %s (exit=%s)\n\n检查:%s | 有额:%s | 无额:%s | 无效移入:%s(库存%s)\n去重:%s | 临时:%s | report清理:%s\n无效原因:%s\n\n如需删除无效JSON：回复 删除无效JSON\n" \
-    "$TS_UTC" "$TS_SH" "$STATUS" "$RC" \
-    "$CHECKED" "$FINAL_QUOTA" "$FINAL_NO_QUOTA" "$INVALID_MOVED" "$INVALID_STOCK" \
-    "$DEDUP" "$TRANSIENT" "$REPORT_PRUNE" \
-    "$INVALID_REASONS")
+  SUMMARY="Codex auths 每小时校验
+UTC: ${TS_UTC}  上海: ${TS_SH}  ${STATUS} (exit=${RC})
+
+检查:${CHECKED}  有额:${FINAL_QUOTA}  无额:${FINAL_NO_QUOTA}
+无效移入:${INVALID_MOVED}(库存${INVALID_STOCK})  续期:${REFRESHED}
+去重:${DEDUP}  临时保留:${TRANSIENT}
+无效原因:${INVALID_REASONS}"
 fi
 
-send_message() {
+# ── Telegram 发送函数（自动分片：超 4096 字符改发文件）──────────────────────────
+tg_send_text() {
   local text="$1"
   local attempt
+  # TG 单条消息上限 4096 字节；超限直接改发文件
+  if [ "${#text}" -gt 4000 ]; then
+    local tmp_txt="$TMP_DIR/tg_msg_$$.txt"
+    printf '%s' "$text" > "$tmp_txt"
+    tg_send_file "$tmp_txt" "消息超长，以文件发送"
+    rm -f "$tmp_txt"
+    return
+  fi
   for attempt in 1 2 3; do
-    if curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-      -d chat_id="${TG_CHAT}" \
-      --data-urlencode "text=${text}" > /dev/null; then
+    if curl -fsS --max-time 10 -X POST \
+        "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+        -d chat_id="${TG_CHAT}" \
+        --data-urlencode "text=${text}" > /dev/null; then
       return 0
     fi
-    sleep 2
+    sleep $((attempt * 2))
   done
   return 1
 }
 
-send_document() {
+tg_send_file() {
   local file="$1"
-  local caption="$2"
+  local caption="${2:-}"
   local attempt
   for attempt in 1 2 3; do
-    if curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
-      -F chat_id="${TG_CHAT}" \
-      -F caption="${caption}" \
-      -F document=@"${file}" > /dev/null; then
+    if curl -fsS --max-time 30 -X POST \
+        "https://api.telegram.org/bot${TG_TOKEN}/sendDocument" \
+        -F chat_id="${TG_CHAT}" \
+        -F "caption=${caption}" \
+        -F document=@"${file}" > /dev/null; then
       return 0
     fi
-    sleep 2
+    sleep $((attempt * 2))
   done
   return 1
 }
 
-# 先发精简摘要（不会出现一堆 \n）
-send_message "$SUMMARY" || true
+# ── 发送摘要 ────────────────────────────────────────────────────────────────────
+tg_send_text "$SUMMARY" || true
 
-# 详细日志默认不发（用户反馈"这个不用发我"），只在脚本异常时发送
-# 如需在无效/临时错误时也发送，可设置：SEND_DETAIL=1
-SEND_DETAIL="${SEND_DETAIL:-0}"
+# ── 发送详细日志（仅在异常或 SEND_DETAIL=1 时）──────────────────────────────────
 if [ "$RC" -ne 0 ]; then
-  send_document "$OUT_FILE" "Codex auths 每小时校验：详细日志\n${TS_UTC}\n${TS_SH}\nexit=${RC}" || true
-elif [ "$SEND_DETAIL" = "1" ] && { [ "$INVALID_MOVED" -gt 0 ] || [ "$TRANSIENT" -gt 0 ]; }; then
-  send_document "$OUT_FILE" "Codex auths 每小时校验：详细日志\n${TS_UTC}\n${TS_SH}\nexit=${RC}" || true
+  tg_send_file "$OUT_FILE" "详细日志 ${TS_UTC} exit=${RC}" || true
+elif [ "$SEND_DETAIL" = "1" ] && { [ "${INVALID_MOVED:-0}" -gt 0 ] || [ "${TRANSIENT:-0}" -gt 0 ]; }; then
+  tg_send_file "$OUT_FILE" "详细日志 ${TS_UTC}" || true
 fi
 
 exit 0
