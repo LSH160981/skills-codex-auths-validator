@@ -68,8 +68,14 @@ INVALID_REASONS=$(echo "$OUTPUT" | awk -F'：' '/^无效原因统计：/ {print 
 STATUS="OK"
 if [ "$RC" -ne 0 ]; then STATUS="ERROR"; fi
 
-# 规则：如果两个目录都空（有额=0 且 无额=0），只发极简通知
-if [ "$FINAL_QUOTA" -eq 0 ] && [ "$FINAL_NO_QUOTA" -eq 0 ]; then
+# 规则：如果两个目录都空（auths 与 auths_no_quota 目录内 json 文件数都为 0），只发极简通知
+# 注意：不能依赖 OUTPUT 文本解析（解析失败会误判为 0）
+Q_COUNT=$(find /home/docker/CLIProxyAPI/auths -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+NQ_COUNT=$(find /home/docker/CLIProxyAPI/auths_no_quota -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+: "${Q_COUNT:=0}"
+: "${NQ_COUNT:=0}"
+
+if [ "$Q_COUNT" -eq 0 ] && [ "$NQ_COUNT" -eq 0 ]; then
   SUMMARY=$(printf "Codex auths 每小时校验：两个目录均为空\nUTC: %s\n上海: %s\nexit=%s\n" "$TS_UTC" "$TS_SH" "$RC")
 else
   SUMMARY=$(printf "Codex auths 每小时校验\nUTC: %s\n上海: %s\n结果: %s (exit=%s)\n\n检查:%s | 有额:%s | 无额:%s | 无效移入:%s(库存%s)\n去重:%s | 临时:%s | report清理:%s\n无效原因:%s\n\n如需删除无效JSON：回复 删除无效JSON\n日志文件:%s\n" \
