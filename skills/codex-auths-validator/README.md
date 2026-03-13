@@ -64,7 +64,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ### 固定三项定时任务（上海时区）
 
-1. **每小时自动校验清理（系统 crontab）**：`hourly-run-and-notify.sh`（先发精简摘要；异常/无效/临时错误自动附详细日志文件）
+1. **每小时自动校验清理（系统 crontab）**：`hourly-run-and-notify.sh`（默认精简摘要；若有额/无额两个目录都为空则仅发极简通知；异常/无效/临时错误自动附详细日志文件）
 2. 每日 00:00 GitHub 学习巡检（OpenClaw cron 可用，agentTurn）
 3. 每日 00:00 Skill 同步（OpenClaw cron 可用，agentTurn）
 

@@ -181,7 +181,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 用途：
 - 供系统 crontab 每小时调用，**完全不依赖 OpenClaw cron delivery 机制**。
-- 直接运行 `hourly-reconcile.mjs`，生成**精简摘要**发 TG（避免一堆换行），并在异常/无效/临时错误时自动附带详细日志文件。
+- 直接运行 `hourly-reconcile.mjs`，默认发**精简摘要**；若 `auths` 与 `auths_no_quota` 两个目录都为空（有额=0 且 无额=0），则只发**极简通知**；并在异常/无效/临时错误时自动附带详细日志文件。
 - 这是最稳定的通知方式：不需要 LLM session，不受 auth-profiles.json 影响。
 
 系统 crontab 条目：
