@@ -41,10 +41,13 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 1. 多 provider 自动识别（qwen/kimi/gemini/claude/codex/vertex/...）
 2. codex 远程验证 + 统一状态体系
-3. 双目录分层（有额度 / 无额度）+ 无效目录归档
-4. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
-5. 每小时稳定巡检（并发锁 + 临时错误保留）
-6. 每日学习巡检 + 每日 skill 同步
+3. **三层过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天，过期不直接丢弃
+4. **refresh_token 自动续期**：过期先尝试换新 token 并写回文件，救回可用账号
+5. 双目录分层（有额度 / 无额度）+ 无效目录归档
+6. **account_id 去重**：优先保留有额度的 account，自动移除冗余重复文件
+7. ZIP/7z 导入自动接管（仅处理 JSON，非 JSON 忽略）
+8. 每小时稳定巡检（并发锁 + 临时错误保留 + 自动去重 + report 自动清理）
+9. 每日学习巡检 + 每日 skill 同步
 
 ### 目录规则
 
@@ -52,7 +55,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - `auths_no_quota_dir`：有效但无额度/429
 - `auths_invalid_dir`：无效文件（可解释原因，用户确认后可删）
 
-### 三个脚本（谁做什么）
+### 四个脚本（谁做什么）
 
 - `scripts/discover-auth-dir.mjs`：首次安装自动探测目录
 - `scripts/validate-auths.mjs`：一次性人工批处理
@@ -61,20 +64,26 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ### 固定三项定时任务（上海时区）
 
-1. 每小时自动校验清理
-2. 每日 00:00 GitHub 学习巡检
-3. 每日 00:00 Skill 同步
+1. **每小时自动校验清理（系统 crontab）**：`skills/codex-auths-validator/scripts/hourly-run-and-notify.sh`
+   - 默认发精简摘要
+   - 若有额/无额两个目录都为空：仅发极简通知
+   - 异常/无效/临时错误：自动附详细日志文件
+2. 每日 00:00 GitHub 学习巡检（OpenClaw cron，可用 agentTurn）
+3. 每日 00:00 Skill 同步（OpenClaw cron，可用 agentTurn）
 
-### 关键状态（给用户解释“为什么无效”）
+### 关键状态（给用户解释"为什么无效"）
 
 - `VALID_QUOTA`
 - `VALID_NO_QUOTA`
 - `INVALID_AUTH`
+- `INVALID_EXPIRED`（三层过期判断后仍无法续期才丢弃；续期失败会继续 API 校验，401 才判死）
 - `INVALID_JSON`
 - `INVALID_MISSING_FIELDS`
 - `INVALID_APPLEDOUBLE`
+- `INVALID_DUPLICATE`（account_id 重复，优先保留有额度的）
 - `SCHEMA_VALID_PROVIDER`
 - `TRANSIENT_KEEP`
+- reason=`refreshed`（token 续期成功，hourly summary 里有 `refreshedCount`）
 
 ### 运行截图（真实执行）
 
@@ -88,14 +97,24 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ![运行截图2](assets/skill-run-02.jpg)
 
+#### 图3：巡检结果补充截图
+
+![运行截图3](assets/skill-run-03.jpg)
+
 ### 对话总结（版本演进）
 
 - 从 codex 单类型校验，扩展到多 provider 自动识别
 - 从直接删除，升级为无效目录归档 + 询问用户是否删除
 - 从手动导入，升级为 ZIP/7z 自动接管与分层
 - 修复每小时任务波动（并发锁 + 临时错误保留）
-- 强化新手体验：只给 JSON 目录即可自动接管
-- 固化文档纪律：SKILL / WORKFLOW / README 必须同步更新
+- **新增三层JWT过期检测**：JWT `exp` → `expired` 字段 → `last_refresh`+7天（无法判断则继续 API 校验）
+- **新增 refresh_token 自动续期**：过期先尝试续期并写回文件，救回可用账号
+- **account_id 去重**：优先保留有额度账号（先扫 auths 再扫 auths_no_quota），重复移入 invalid
+- **reports 目录自动清理**：hourly-reconcile 启动时自动清理旧报告，默认保留最近 72 个（可 `--max-report-files` 配置）
+- **invalid 目录积累警告**：超过 500 个时自动提示清理命令
+- **validate-auths.mjs 与 hourly/import 功能对齐**：加入三层过期检测 + refresh_token 续期 + 去重
+- **续期失败不直接 INVALID（关键修复）**：refresh_token 失效后继续走 API 校验，API 401 才算真死——避免 expired 字段不准导致误判有效 token
+- **定时通知不依赖 OpenClaw cron（架构决策）**：每小时跑脚本+发TG 改用系统 crontab + shell（`hourly-run-and-notify.sh`）最稳定
 
 ---
 
@@ -111,10 +130,13 @@ If path is not provided, it assumes possible `Cli-Proxy-API-Management-Center` d
 
 1. Multi-provider auto detection (qwen/kimi/gemini/claude/codex/vertex/...)
 2. Codex remote validation + unified status model
-3. Dual-directory classification + invalid directory archive
-4. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
-5. Stable hourly reconcile (lock + transient keep)
-6. Daily learning check + daily skill self-sync
+3. **3-layer expiry detection**: JWT `exp` → `expired` field → `last_refresh`+7d; never discards blindly
+4. **Auto token refresh**: uses `refresh_token` to renew expired tokens in-place, saving recoverable accounts
+5. Dual-directory classification + invalid directory archive
+6. **account_id deduplication**: keeps the quota-bearing account when duplicates exist
+7. ZIP/7z import auto takeover (JSON only, non-JSON ignored)
+8. Stable hourly reconcile (lock + transient keep + auto dedup + report auto-prune)
+9. Daily learning check + daily skill self-sync
 
 ### Directory model
 
@@ -126,11 +148,11 @@ If path is not provided, it assumes possible `Cli-Proxy-API-Management-Center` d
 
 - `scripts/discover-auth-dir.mjs` (first-time path discovery)
 - `scripts/validate-auths.mjs` (manual one-off batch)
-- `scripts/hourly-reconcile.mjs` (hourly stable cron runner)
+- `scripts/hourly-reconcile.mjs` (hourly stable runner)
 - `scripts/import-archive.mjs` (ZIP/7z JSON-only import takeover)
 
 ### Required scheduled jobs (Asia/Shanghai)
 
-1. Hourly validation cleanup
-2. Daily 00:00 GitHub learning check
-3. Daily 00:00 skill self-sync
+1. **Hourly validation cleanup (system crontab)**: `skills/codex-auths-validator/scripts/hourly-run-and-notify.sh`
+2. Daily 00:00 GitHub learning check (OpenClaw cron, agentTurn)
+3. Daily 00:00 skill self-sync (OpenClaw cron, agentTurn)
