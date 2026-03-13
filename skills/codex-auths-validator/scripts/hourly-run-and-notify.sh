@@ -5,9 +5,18 @@ set -euo pipefail
 TG_TOKEN="REDACTED_TG_TOKEN"
 TG_CHAT="REDACTED_TG_CHAT"
 
-TS_UTC="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 TMP_DIR="/tmp/codex-auths"
 mkdir -p "$TMP_DIR"
+
+# 防重复：同一时间段被 cron + 手动触发时，只允许一个实例运行
+LOCK_FILE="$TMP_DIR/hourly-run-and-notify.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  exit 0
+fi
+
+TS_UTC="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+TS_SH="$(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S Asia/Shanghai")"
 
 OUT_FILE="$TMP_DIR/hourly-reconcile-$(date -u +"%Y%m%dT%H%M%SZ").log"
 
@@ -24,7 +33,7 @@ set -e
 printf "[%s] exit=%s\n\n%s\n" "$TS_UTC" "$RC" "$OUTPUT" > "$OUT_FILE"
 
 # Telegram sendMessage 最大 4096 字符；超过则改发文件
-MSG="Codex auths 每小时校验\n${TS_UTC}\nexit=${RC}\n\n${OUTPUT}"
+MSG="Codex auths 每小时校验\n${TS_UTC}\n${TS_SH}\nexit=${RC}\n\n${OUTPUT}"
 LEN=${#MSG}
 
 send_message() {
