@@ -43,128 +43,12 @@ function safeMove(src, dstDir, basename) {
   return name;
 }
 
-const KNOWN = new Set(['qwen', 'kimi', 'gemini', 'gemini-cli', 'aistudio', 'claude', 'codex', 'antigravity', 'iflow', 'vertex']);
+import { validateCodexUsageByApi } from './lib/codex.mjs';
+import { detectProvider, validateSchemaWithReason } from './lib/provider.mjs';
 
-function detectProvider(json) {
-  const direct = (json.type || json.provider || '').toString().toLowerCase().trim();
-  if (KNOWN.has(direct)) return direct;
-
-  if (json.access_token && json.account_id) return 'codex';
-  if (typeof json.api_key === 'string' && json.api_key.startsWith('AIza')) return 'gemini';
-  if (typeof json.api_key === 'string' && json.api_key.startsWith('sk-ant-')) return 'claude';
-  if (json.project_id && json.private_key && json.client_email) return 'vertex';
-  if (json.refresh_token && (json.client_id || json.account_id)) return 'qwen';
-  if (json.api_key || json.access_token || json.refresh_token) return 'unknown-token-style';
-  return 'unknown';
-}
-
-function validateSchema(provider, json) {
-  const hasAny = (...keys) => keys.some((k) => {
-    const v = json[k];
-    return typeof v === 'string' ? v.trim().length > 0 : Boolean(v);
-  });
-
-  switch (provider) {
-    case 'codex':
-      return hasAny('access_token') && hasAny('account_id')
-        ? { ok: true }
-        : { ok: false, reason: 'codex_missing_required_fields' };
-    case 'gemini':
-    case 'gemini-cli':
-    case 'aistudio':
-      return hasAny('api_key', 'access_token')
-        ? { ok: true }
-        : { ok: false, reason: `${provider}_missing_required_fields` };
-    case 'claude':
-      return hasAny('api_key', 'x_api_key', 'access_token')
-        ? { ok: true }
-        : { ok: false, reason: 'claude_missing_required_fields' };
-    case 'vertex':
-      return hasAny('project_id') && hasAny('private_key', 'access_token')
-        ? { ok: true }
-        : { ok: false, reason: 'vertex_missing_required_fields' };
-    case 'qwen':
-    case 'kimi':
-    case 'iflow':
-    case 'antigravity':
-      return hasAny('access_token', 'api_key', 'refresh_token')
-        ? { ok: true }
-        : { ok: false, reason: `${provider}_missing_required_fields` };
-    default:
-      return hasAny('access_token', 'api_key', 'refresh_token')
-        ? { ok: true, schemaOnly: true }
-        : { ok: false, reason: 'unknown_provider_missing_required_fields' };
-  }
-}
-
-function getUsedPercents(payload) {
-  const rl = payload?.rate_limit || {};
-  const cr = payload?.code_review_rate_limit || {};
-  const windows = [rl.primary_window, rl.secondary_window, cr.primary_window, cr.secondary_window].filter(Boolean);
-  return windows
-    .map((w) => (typeof w.used_percent === 'number' ? w.used_percent : null))
-    .filter((v) => v !== null);
-}
-
-function hasQuota(payload) {
-  const rl = payload?.rate_limit || {};
-  const cr = payload?.code_review_rate_limit || {};
-  const used = getUsedPercents(payload);
-
-  const noQuota =
-    rl.limit_reached === true ||
-    cr.limit_reached === true ||
-    used.some((v) => v >= 100);
-
-  return !noQuota;
-}
 
 async function validateCodexByApi(token, account) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const resp = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
-        'Chatgpt-Account-Id': account,
-      },
-      signal: controller.signal,
-    });
-
-    const body = await resp.text();
-    if (resp.status === 401 || resp.status === 403) {
-      return { kind: 'invalid', reason: `auth_${resp.status}` };
-    }
-    if (resp.status === 429) {
-      return { kind: 'no_quota', reason: 'rate_or_quota_429' };
-    }
-    if (resp.status >= 500) {
-      return { kind: 'transient', reason: `status_${resp.status}` };
-    }
-    if (resp.status !== 200) {
-      return { kind: 'transient', reason: `status_${resp.status}` };
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return { kind: 'transient', reason: 'invalid_usage_json' };
-    }
-
-    return hasQuota(payload)
-      ? { kind: 'quota', reason: 'ok_200' }
-      : { kind: 'no_quota', reason: 'ok_200_no_quota' };
-  } catch (e) {
-    const msg = String(e || '');
-    if (msg.includes('AbortError')) return { kind: 'transient', reason: 'timeout' };
-    return { kind: 'transient', reason: 'network_error' };
-  } finally {
-    clearTimeout(timer);
-  }
+  return validateCodexUsageByApi(token, account, { timeoutMs: TIMEOUT_MS, treat429As: 'no_quota' });
 }
 
 const files = [
@@ -197,7 +81,7 @@ async function worker() {
     }
 
     const provider = detectProvider(json);
-    const schema = validateSchema(provider, json);
+    const schema = validateSchemaWithReason(provider, json);
     if (!schema.ok) {
       ops.push({ dir, file, provider, action: 'invalid', reason: schema.reason, status: 'INVALID_MISSING_FIELDS' });
       continue;

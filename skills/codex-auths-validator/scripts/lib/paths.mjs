@@ -21,5 +21,6 @@ export function deriveDirsFromAuthDir(authDir) {
     noQuotaDir: `${quotaDir}_no_quota`,
     invalidDir: `${quotaDir}_invalid`,
     reportDir: path.join(parent, 'reports'),
+    inboxDir: `${quotaDir}_inbox`,
   };
 }

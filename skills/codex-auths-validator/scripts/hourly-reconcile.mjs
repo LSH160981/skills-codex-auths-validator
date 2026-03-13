@@ -4,6 +4,7 @@ import path from 'path';
 
 import { arg, numArg } from './lib/args.mjs';
 import { deriveDirsFromAuthDir } from './lib/paths.mjs';
+import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, writeJsonAtomic } from './lib/codex.mjs';
 
 // 统一入口：只给 --auth-dir（有额度目录 auths）即可运行
 const AUTH_DIR = arg('auth-dir', '');
@@ -127,114 +128,7 @@ function releaseLock() {
 }
 
 // ─── 公共工具函数 ───────────────────────────────────────────────────────────────
-
-/**
- * 从 JWT id_token 中提取 payload.exp（Unix 秒）。
- * 纯手写 base64 decode，无外部依赖。失败返回 null。
- */
-function getJwtExp(idToken) {
-  try {
-    if (typeof idToken !== 'string') return null;
-    const parts = idToken.split('.');
-    if (parts.length < 2) return null;
-    // base64url → base64 → Buffer
-    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const pad = (4 - (b64.length % 4)) % 4;
-    b64 += '='.repeat(pad);
-    const decoded = Buffer.from(b64, 'base64').toString('utf8');
-    const payload = JSON.parse(decoded);
-    return typeof payload.exp === 'number' ? payload.exp : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 判断 token 是否已过期。
- * 优先级：JWT exp > expired 字段 > last_refresh+7天 > 默认未过期
- */
-function isTokenExpired(json) {
-  const nowMs = Date.now();
-
-  // 方法1：解 JWT exp（最权威）
-  const jwtExp = getJwtExp(json.id_token);
-  if (jwtExp !== null) {
-    return jwtExp * 1000 < nowMs;
-  }
-
-  // 方法2：用 expired 字段
-  const expiredStr = (json.expired || '').toString().trim();
-  if (expiredStr) {
-    const expiredTime = new Date(expiredStr).getTime();
-    if (!isNaN(expiredTime)) return expiredTime < nowMs;
-  }
-
-  // 方法3：用 last_refresh 推算（假设 token 7天有效期）
-  const refreshStr = (json.last_refresh || '').toString().trim();
-  if (refreshStr) {
-    const refreshTime = new Date(refreshStr).getTime();
-    if (!isNaN(refreshTime)) return refreshTime + 7 * 24 * 3600 * 1000 < nowMs;
-  }
-
-  // 无法判断，默认未过期，走 API
-  return false;
-}
-
-/**
- * 用 refresh_token 换新的 access_token。
- * 返回：更新后的 json 对象（成功）| null（refresh_token 也失效）| 'transient'（网络/5xx 临时错误）
- */
-async function tryRefreshToken(json) {
-  if (!json.refresh_token) return null;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const resp = await fetch('https://auth0.openai.com/oauth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        client_id: 'pdlLIX2Y72MIl2rhLhTE9VV9bN905kBh',
-        refresh_token: json.refresh_token,
-      }),
-      signal: controller.signal,
-    });
-
-    if (resp.status === 401 || resp.status === 403) return null;
-    if (resp.status >= 400 && resp.status < 500) {
-      // 尝试解析 error 字段
-      try {
-        const body = await resp.json();
-        if (body.error === 'invalid_grant' || body.error === 'invalid_token') return null;
-      } catch {}
-      return null;
-    }
-    if (resp.status >= 500) return 'transient';
-    if (resp.status !== 200) return 'transient';
-
-    let data;
-    try { data = await resp.json(); } catch { return 'transient'; }
-
-    if (!data.access_token) return null;
-
-    const updated = { ...json };
-    updated.access_token = data.access_token;
-    updated.last_refresh = new Date().toISOString();
-    if (typeof data.expires_in === 'number') {
-      updated.expired = new Date(Date.now() + data.expires_in * 1000).toISOString();
-    }
-    if (data.id_token) updated.id_token = data.id_token;
-    return updated;
-  } catch (e) {
-    const msg = String(e || '');
-    if (msg.includes('AbortError')) return 'transient';
-    return 'transient';
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
+// 已迁移到 ./lib/codex.mjs（避免脚本之间重复实现）
 // ─── 工具函数结束 ────────────────────────────────────────────────────────────────
 
 function listJson(dir) {
@@ -256,76 +150,7 @@ function safeMove(src, dstDir, basename) {
   return name;
 }
 
-function getUsedPercents(payload) {
-  const rl = payload?.rate_limit || {};
-  const cr = payload?.code_review_rate_limit || {};
-  const windows = [rl.primary_window, rl.secondary_window, cr.primary_window, cr.secondary_window].filter(Boolean);
-  return windows
-    .map((w) => (typeof w.used_percent === 'number' ? w.used_percent : null))
-    .filter((v) => v !== null);
-}
-
-function hasQuota(payload) {
-  const rl = payload?.rate_limit || {};
-  const cr = payload?.code_review_rate_limit || {};
-  const used = getUsedPercents(payload);
-
-  const noQuota =
-    rl.limit_reached === true ||
-    cr.limit_reached === true ||
-    used.some((v) => v >= 100);
-
-  return !noQuota;
-}
-
-async function validateByApi(token, account) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const resp = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal',
-        'Chatgpt-Account-Id': account,
-      },
-      signal: controller.signal,
-    });
-
-    const body = await resp.text();
-
-    if (resp.status === 401 || resp.status === 403) {
-      return { kind: 'invalid', reason: `auth_${resp.status}` };
-    }
-    if (resp.status === 429) {
-      return { kind: 'no_quota', reason: 'rate_or_quota_429' };
-    }
-    if (resp.status >= 500) {
-      return { kind: 'transient', reason: `status_${resp.status}` };
-    }
-    if (resp.status !== 200) {
-      return { kind: 'transient', reason: `status_${resp.status}` };
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return { kind: 'transient', reason: 'invalid_usage_json' };
-    }
-
-    return hasQuota(payload)
-      ? { kind: 'quota', reason: 'ok_200' }
-      : { kind: 'no_quota', reason: 'ok_200_no_quota' };
-  } catch (e) {
-    const msg = String(e || '');
-    if (msg.includes('AbortError')) return { kind: 'transient', reason: 'timeout' };
-    return { kind: 'transient', reason: 'network_error' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// validateByApi/hasQuota 等已迁移到 ./lib/codex.mjs（validateCodexUsageByApi）
 
 /**
  * 去重：扫描多个目录，对比 account_id 字段，保留每个 account 的第一个文件，其余移入 DIR_INVALID。
@@ -430,7 +255,7 @@ async function worker() {
         // 继续走 API 校验，由 API 结果决定；不在此处直接判 INVALID_EXPIRED
       } else {
         // 续期成功，写回文件，用新 token 继续走 API 校验
-        fs.writeFileSync(full, JSON.stringify(refreshed, null, 2));
+        writeJsonAtomic(full, refreshed);
         json = refreshed;
         token = (refreshed.access_token || '').toString().trim();
         refreshedCount += 1;
@@ -438,7 +263,7 @@ async function worker() {
       }
     }
 
-    const chk = await validateByApi(token, account);
+    const chk = await validateCodexUsageByApi(token, account, { timeoutMs: TIMEOUT_MS, treat429As: 'no_quota' });
     if (chk.kind === 'invalid') {
       ops.push({ dir, file, action: 'to_invalid', reason: chk.reason });
     } else if (chk.kind === 'quota') {
