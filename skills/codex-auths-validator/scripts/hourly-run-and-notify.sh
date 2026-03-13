@@ -22,11 +22,14 @@ OUT_FILE="$TMP_DIR/hourly-reconcile-$(date -u +"%Y%m%dT%H%M%SZ").log"
 
 # 运行校验脚本（捕获 stdout+stderr）
 set +e
+AUTH_DIR="${AUTH_DIR:-/home/docker/CLIProxyAPI/auths}"
+CONCURRENCY="${CONCURRENCY:-40}"
+TIMEOUT_MS="${TIMEOUT_MS:-12000}"
+
 OUTPUT=$(node /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-reconcile.mjs \
-  --dir-quota /home/docker/CLIProxyAPI/auths \
-  --dir-no-quota /home/docker/CLIProxyAPI/auths_no_quota \
-  --dir-invalid /home/docker/CLIProxyAPI/auths_invalid \
-  --concurrency 40 --timeout-ms 12000 2>&1)
+  --auth-dir "$AUTH_DIR" \
+  --concurrency "$CONCURRENCY" \
+  --timeout-ms "$TIMEOUT_MS" 2>&1)
 RC=$?
 set -e
 
@@ -70,8 +73,8 @@ if [ "$RC" -ne 0 ]; then STATUS="ERROR"; fi
 
 # 规则：如果两个目录都空（auths 与 auths_no_quota 目录内 json 文件数都为 0），只发极简通知
 # 注意：不能依赖 OUTPUT 文本解析（解析失败会误判为 0）
-Q_COUNT=$(find /home/docker/CLIProxyAPI/auths -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
-NQ_COUNT=$(find /home/docker/CLIProxyAPI/auths_no_quota -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+Q_COUNT=$(find "$AUTH_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+NQ_COUNT=$(find "${AUTH_DIR}_no_quota" -maxdepth 1 -type f -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
 : "${Q_COUNT:=0}"
 : "${NQ_COUNT:=0}"
 

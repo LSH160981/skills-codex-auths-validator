@@ -184,10 +184,12 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 - 直接运行 `hourly-reconcile.mjs`，默认发**精简摘要**；若 `auths` 与 `auths_no_quota` 两个目录都为空（以目录内 `*.json` 文件数判定，避免解析输出误判），则只发**极简通知**；并在异常/无效/临时错误时自动附带详细日志文件。
 - 这是最稳定的通知方式：不需要 LLM session，不受 auth-profiles.json 影响。
 
-系统 crontab 条目：
+系统 crontab 条目（只配置一个目录即可运行）：
 ```bash
-0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
+0 * * * * AUTH_DIR=/home/docker/CLIProxyAPI/auths bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
 ```
+
+不写 `AUTH_DIR` 时默认使用：`/home/docker/CLIProxyAPI/auths`。
 
 安装命令：
 ```bash

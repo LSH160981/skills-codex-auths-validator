@@ -313,9 +313,9 @@ rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 
 **正确做法（已落地）：**
 ```bash
-# 新机器安装时执行一次
+# 新机器安装时执行一次（只配置一个目录即可运行）
 (crontab -l 2>/dev/null | grep -v hourly-run-and-notify; \
- echo "0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
+ echo "0 * * * * AUTH_DIR=/home/docker/CLIProxyAPI/auths bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
 ```
 
 `scripts/hourly-run-and-notify.sh` 内置：
