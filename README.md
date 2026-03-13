@@ -74,8 +74,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
    - 若有额/无额两个目录都为空（以目录内 `*.json` 文件数判定）：仅发极简通知
    - **默认不发详细日志文件**（用户不想被刷屏）；仅当脚本异常（exit!=0）才会自动附详细日志文件。需要在无效/临时错误时也附日志可设置 `SEND_DETAIL=1`
 2. 每日 00:00 GitHub 学习巡检（OpenClaw cron，可用 agentTurn）
-3. **每小时 OpenClaw 更新检查（系统 crontab）**：`skills/codex-auths-validator/scripts/ops/openclaw_update.sh`
-   - 仅 Before!=After 且更新成功才通知 TG；否则静默
+3. 每日 00:00 Skill 同步（OpenClaw cron，可用 agentTurn）
 
 ### 关键状态（给用户解释"为什么无效"）
 

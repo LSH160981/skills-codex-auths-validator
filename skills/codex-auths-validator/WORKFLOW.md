@@ -426,6 +426,5 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 
 **预防措施（新机器必做）：**
 1. 安装后立即用系统 crontab 设置 `hourly-run-and-notify.sh`
-2. 禁用对应的 OpenClaw cron 任务，避免重复/干扰（Codex hourly: `eb8ad007-...`；OpenClaw update hourly: `9927791d-...`）
-3. OpenClaw 更新检查也用系统 crontab：`scripts/ops/openclaw_update.sh`（仅 Before!=After 且更新成功才通知 TG；否则静默）
+2. 禁用对应的 OpenClaw cron 任务，避免重复/干扰
 3. 验证方法：手动执行脚本一次，确认 TG 收到消息后再离开

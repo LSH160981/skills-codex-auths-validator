@@ -617,6 +617,5 @@ If no path is provided, run discovery first; only ask user when discovery has lo
   - 新增脚本：`scripts/hourly-run-and-notify.sh`（node 跑校验 + curl 直发 TG）
   - 系统 crontab 条目：`0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1`
   - OpenClaw cron 任务 `eb8ad007-426f-4061-ba30-5c48c2e7e8da` 已禁用
-- OpenClaw 更新检查 cron 任务 `9927791d-27ea-4373-94c4-edd4347dd184` 已禁用（改用系统 crontab + `scripts/ops/openclaw_update.sh`）
 
   **根本教训：需要"定时执行命令 + 直接发通知"的自动化任务，必须用系统 crontab + shell + curl，不要依赖 OpenClaw cron delivery 机制。**
