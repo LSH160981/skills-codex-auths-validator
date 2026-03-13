@@ -591,11 +591,12 @@ If no path is provided, run discovery first; only ask user when discovery has lo
 
 - 2026-03-13 00:25~01:34 UTC：cron 任务 agent 配置错误，所有 isolated job 连续静默失败约 34 小时。
   - 现象：用户报告"每小时验证没有发送消息"，查 `cron.runs` 发现错误为 `All models failed: ak/claude-sonnet-4-6: No API key found for provider "ak"... (auth)` 连续 34 次。
-  - 根因：cron 任务的 `agentId` 为 `fast-pool`（isolated agent），该 agent 目录下 `auth-profiles.json` 无可用 API key，无法启动 LLM session 执行任务，但调度器不抛出运行级别告警，故用户无感知。注意：delivery 目标之前也存在 `@heartbeat` 无法解析的投递错误（Bad Request: chat not found）。
-  - 修复：将全部 cron 任务的 `agentId` 改为 `main`，直接使用主 session 的 auth 配置。同步更新 `sessionKey` 为 `agent:main:telegram:direct:REDACTED_TG_CHAT`。
+  - 根因：cron 任务的 `agentId` 为 `fast-pool`（isolated agent），该 agent 目录下 `auth-profiles.json` 无可用 API key，无法启动 LLM session 执行任务，但调度器不抛出运行级别告警，故用户无感知。注意：delivery 目标曾误写为 `@heartbeat` 导致投递失败（400 chat not found）。
+  - 修复（最终）：
+    - Codex 每小时校验改为系统 crontab（不依赖 OpenClaw cron delivery）
+    - GitHub 学习巡检任务 delivery 目标修正为 `to=REDACTED_TG_CHAT`（不再使用 `@heartbeat`）
   - 涉及任务：Codex auths 每小时校验 / 模型健康巡检 / GitHub 学习巡检（共 3 个）
-  - 教训：**cron isolated job 使用独立 agent 时，必须确认该 agent 目录有有效 auth key，否则会静默失败。优先使用 `agentId: main` 或提前验证 isolated agent 的 auth-profiles.json。**
-  - 操作建议：创建/更新 cron 任务时，始终指定 `agentId: "main"` 和对应 `sessionKey: "agent:main:telegram:direct:<chatId>"`，除非明确需要 isolated agent 且已确认其 auth 配置。
+  - 教训：**cron isolated job 使用独立 agent 时，必须确认该 agent 目录有有效 auth key，否则会静默失败；同时 delivery.to 必须是数字 chat_id。**
 
 - 2026-03-13 01:34~02:27 UTC：OpenClaw cron delivery 机制根本无法可靠执行脚本+发TG，约40小时持续未发通知。
 
