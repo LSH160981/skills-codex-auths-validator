@@ -298,7 +298,10 @@ When user asks for hourly auto-clean:
    - 删除原因统计：<按原因计数>
 5. If failed, report error and processed progress.
 
-Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEvent`.
+Recommended cron payload style（结论）：
+- **不要用 OpenClaw cron 来做"每小时跑脚本+发TG"**（见 Incident Log 2026-03-13）。
+- 该场景必须用**系统 crontab + `scripts/hourly-run-and-notify.sh`**。
+- OpenClaw cron 仅保留用于"AI 学习巡检/总结"等纯 agentTurn 任务。
 
 ## 对话总结（阶段成果，需持续更新）
 
@@ -464,30 +467,32 @@ Recommended cron payload style: `sessionTarget: isolated`, `payload.kind: agentT
 
 When this skill is installed/used on a new machine, ALWAYS ensure these three cron jobs exist automatically (create if missing, update if exists by name):
 
-### Job A: Hourly auth validation cleanup
+### Job A: Hourly auth validation cleanup（系统 crontab）
 
-- Name: `Codex auths 每小时自动校验清理（上海）`
-- Schedule: `0 * * * *` (`Asia/Shanghai`)
-- Behavior (dual-directory flow, stabilized):
-  - use script: `skills/codex-auths-validator/scripts/hourly-reconcile.mjs`
-  - scan both directories:
-    - `/home/docker/CLIProxyAPI/auths` (valid + quota)
-    - `/home/docker/CLIProxyAPI/auths_no_quota` (valid but no quota / rate-limited)
-  - validate via `GET https://chatgpt.com/backend-api/wham/usage`
-  - `200` with positive remaining quota -> move to `/home/docker/CLIProxyAPI/auths`
-  - `200` with zero quota OR `429` -> move to `/home/docker/CLIProxyAPI/auths_no_quota`
-  - delete invalid (`401/403`, malformed JSON, missing required fields, `._*.json`)
-  - transient errors (`timeout/network/5xx/other`) keep in-place, do NOT reclassify as no-quota
-  - lock file `/tmp/codex-auths-hourly.lock` prevents concurrent runs and metric oscillation
-  - next hourly run re-checks both dirs and auto-moves files back when quota recovers
-  - send Chinese summary:
-    - 总共检查：<总数> 个
-    - 有效有额度（最终在 auths）：<数量>
-    - 有效无额度（最终在 auths_no_quota）：<数量>
-    - 删除：<数量>
-    - 目录迁移统计：<from->to 计数>
-    - 删除原因统计：<按原因计数>
-    - 临时错误保留：<数量>（<按原因计数>）
+> 结论：该任务必须用系统 crontab（OpenClaw cron 不可靠，见 Incident Log 2026-03-13）。
+
+- Name（crontab）：`Codex auths hourly-run-and-notify`
+- Schedule：`0 * * * *`（Asia/Shanghai 在系统层面按服务器时区；如需严格上海时区请把服务器 TZ 设为 Asia/Shanghai）
+- Command：
+
+```bash
+0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
+```
+
+- Behavior（双目录流转 + 稳定通知）：
+  - 调用 `scripts/hourly-reconcile.mjs` 扫描并迁移：
+    - `/home/docker/CLIProxyAPI/auths`
+    - `/home/docker/CLIProxyAPI/auths_no_quota`
+    - `/home/docker/CLIProxyAPI/auths_invalid`
+  - 输出通过 Telegram Bot API 发送给用户（超长自动改发文件）
+  - 失败重试 3 次（TG sendMessage/sendDocument）
+  - 本地日志：`/tmp/codex-auths-cron.log` + `/tmp/codex-auths/hourly-reconcile-*.log`
+
+- 依赖：
+  - TG token/chatId 已硬编码在脚本内（按用户要求“关键信息直接体现在代码上”）
+  - 不依赖 OpenClaw agent session / auth-profiles.json
+
+> OpenClaw cron 里的同名 job（如果存在）应禁用，避免重复跑。
 
 ### Job B: Daily 00:00 GitHub learning check
 

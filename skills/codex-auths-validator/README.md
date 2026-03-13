@@ -64,9 +64,9 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ### 固定三项定时任务（上海时区）
 
-1. 每小时自动校验清理
-2. 每日 00:00 GitHub 学习巡检
-3. 每日 00:00 Skill 同步
+1. **每小时自动校验清理（系统 crontab）**：`hourly-run-and-notify.sh`（node 校验 + curl 直发 TG，超长自动发文件）
+2. 每日 00:00 GitHub 学习巡检（OpenClaw cron 可用，agentTurn）
+3. 每日 00:00 Skill 同步（OpenClaw cron 可用，agentTurn）
 
 ### 关键状态（给用户解释"为什么无效"）
 
