@@ -348,6 +348,8 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 - 缺失就 `cron.add`
 - 已存在就 `cron.update` 保持规则一致
 - 每小时任务统一调用 `hourly-reconcile.mjs`（含并发锁与临时错误保留策略）
+- **⚠️ 所有 cron 任务必须设置 `agentId: "main"`**，不可使用 fast-pool 等 isolated agent（isolated agent 无 auth key 时会静默失败，用户无感知）
+- sessionKey 统一为 `agent:main:telegram:direct:<chatId>`
 - 最终向用户报告这两个任务的 job id
 
 ---

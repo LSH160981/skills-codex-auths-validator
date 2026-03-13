@@ -303,6 +303,7 @@ Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEven
 14. **invalid 目录积累警告**：超过 500 个时打印警告，提示 `rm -rf .../auths_invalid/*` 清理命令。
 15. **validate-auths.mjs 功能对齐**：加入三层过期检测 + refresh_token 续期 + account_id 去重，与 hourly/import 行为一致。
 16. **续期失败不直接 INVALID（关键修复）**：refresh_token 失效时不直接丢弃，继续用原 access_token 走 API 校验——因为 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值。只有 API 返回 401 才最终判定失效。
+17. **cron agentId 必须用 main（运维经验）**：isolated agent（如 fast-pool）需要独立 auth-profiles.json；若未配置则所有 isolated cron job 会静默 auth 失败，无任何运行输出，用户无感知。创建/修复 cron 任务时统一使用 `agentId: "main"`，sessionKey 对应 `agent:main:telegram:direct:<chatId>`。
 
 ## Learning rationale and evolution notes (must maintain)
 
@@ -439,7 +440,7 @@ When user requires scheduled learning and code tracking:
    - whether skill was updated
    - whether manual confirmation is needed
 
-Recommended cron payload style: `sessionTarget: main`, `payload.kind: systemEvent`.
+Recommended cron payload style: `sessionTarget: isolated`, `payload.kind: agentTurn`, `agentId: "main"`（必须用 main，确保 auth 可用）.
 
 ## Mandatory auto-provision on new machine (3 cron jobs)
 
@@ -558,3 +559,11 @@ If no path is provided, run discovery first; only ask user when discovery has lo
   - 修复：`refresh_token` 失效后不再直接 INVALID，继续用原 `access_token` 走 API 校验，只有 API 返回 401 才最终判定 `INVALID_EXPIRED`。适用脚本：`hourly-reconcile.mjs`、`import-archive.mjs`。
   - 恢复：将 131 个文件移回 auths，重新跑 hourly-reconcile，结果：31 有额度、95 无额度、5 真正 401 失效。
   - 教训：**过期字段只能做"提前预判"辅助，不能替代 API 校验做最终决策。API 说了算。**
+
+- 2026-03-13 00:25~01:34 UTC：cron 任务 agent 配置错误，所有 isolated job 连续静默失败约 34 小时。
+  - 现象：用户报告"每小时验证没有发送消息"，查 `cron.runs` 发现错误为 `All models failed: ak/claude-sonnet-4-6: No API key found for provider "ak"... (auth)` 连续 34 次。
+  - 根因：cron 任务的 `agentId` 为 `fast-pool`（isolated agent），该 agent 目录下 `auth-profiles.json` 无可用 API key，无法启动 LLM session 执行任务，但调度器不抛出运行级别告警，故用户无感知。注意：delivery 目标之前也存在 `@heartbeat` 无法解析的投递错误（Bad Request: chat not found）。
+  - 修复：将全部 cron 任务的 `agentId` 改为 `main`，直接使用主 session 的 auth 配置。同步更新 `sessionKey` 为 `agent:main:telegram:direct:REDACTED_TG_CHAT`。
+  - 涉及任务：Codex auths 每小时校验 / 模型健康巡检 / GitHub 学习巡检（共 3 个）
+  - 教训：**cron isolated job 使用独立 agent 时，必须确认该 agent 目录有有效 auth key，否则会静默失败。优先使用 `agentId: main` 或提前验证 isolated agent 的 auth-profiles.json。**
+  - 操作建议：创建/更新 cron 任务时，始终指定 `agentId: "main"` 和对应 `sessionKey: "agent:main:telegram:direct:<chatId>"`，除非明确需要 isolated agent 且已确认其 auth 配置。
