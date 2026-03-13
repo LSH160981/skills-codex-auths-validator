@@ -135,9 +135,12 @@ send_document() {
 # 先发精简摘要（不会出现一堆 \n）
 send_message "$SUMMARY" || true
 
-# 异常/有变化时附详细日志（便于排查）
-# 规则：exit!=0 或 无效移入>0 或 临时错误>0 时附带日志
-if [ "$RC" -ne 0 ] || [ "$INVALID_MOVED" -gt 0 ] || [ "$TRANSIENT" -gt 0 ]; then
+# 详细日志默认不发（用户反馈"这个不用发我"），只在脚本异常时发送
+# 如需在无效/临时错误时也发送，可设置：SEND_DETAIL=1
+SEND_DETAIL="${SEND_DETAIL:-0}"
+if [ "$RC" -ne 0 ]; then
+  send_document "$OUT_FILE" "Codex auths 每小时校验：详细日志\n${TS_UTC}\n${TS_SH}\nexit=${RC}" || true
+elif [ "$SEND_DETAIL" = "1" ] && { [ "$INVALID_MOVED" -gt 0 ] || [ "$TRANSIENT" -gt 0 ]; }; then
   send_document "$OUT_FILE" "Codex auths 每小时校验：详细日志\n${TS_UTC}\n${TS_SH}\nexit=${RC}" || true
 fi
 

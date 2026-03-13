@@ -72,7 +72,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
    - 默认只需要配置一个目录：`AUTH_DIR=/path/to/auths`（不配则默认 `/home/docker/CLIProxyAPI/auths`）
    - 默认发精简摘要（从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判）
    - 若有额/无额两个目录都为空（以目录内 `*.json` 文件数判定）：仅发极简通知
-   - 异常/无效/临时错误：自动附详细日志文件（TG 摘要不显示本地日志路径）
+   - **默认不发详细日志文件**（用户不想被刷屏）；仅当脚本异常（exit!=0）才会自动附详细日志文件。需要在无效/临时错误时也附日志可设置 `SEND_DETAIL=1`
 2. 每日 00:00 GitHub 学习巡检（OpenClaw cron，可用 agentTurn）
 3. 每日 00:00 Skill 同步（OpenClaw cron，可用 agentTurn）
 

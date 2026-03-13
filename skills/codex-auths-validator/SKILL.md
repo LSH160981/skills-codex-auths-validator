@@ -181,7 +181,8 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 用途：
 - 供系统 crontab 每小时调用，**完全不依赖 OpenClaw cron delivery 机制**。
-- 直接运行 `hourly-reconcile.mjs`，默认发**精简摘要**（从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判）；若 `auths` 与 `auths_no_quota` 两个目录都为空（以目录内 `*.json` 文件数判定，避免解析输出误判），则只发**极简通知**；并在异常/无效/临时错误时自动附带详细日志文件（摘要不展示本地日志路径）。
+- 直接运行 `hourly-reconcile.mjs`，默认发**精简摘要**（从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判）；若 `auths` 与 `auths_no_quota` 两个目录都为空（以目录内 `*.json` 文件数判定，避免解析输出误判），则只发**极简通知**。
+- **详细日志默认不发送**（用户反馈不需要）；仅当脚本异常（exit!=0）才自动附详细日志文件。若确实需要在无效/临时错误时也发，可设置 `SEND_DETAIL=1`。
 - 这是最稳定的通知方式：不需要 LLM session，不受 auth-profiles.json 影响。
 
 系统 crontab 条目（只配置一个目录即可运行）：

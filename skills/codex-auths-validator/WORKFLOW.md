@@ -320,7 +320,8 @@ rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 
 `scripts/hourly-run-and-notify.sh` 内置：
 - 运行 `hourly-reconcile.mjs`
-- TG 先发**精简摘要**（不刷屏，从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判；摘要不展示本地日志路径）；若 `auths` 与 `auths_no_quota` 两个目录都为空（以目录内 `*.json` 文件数判定，避免解析输出误判），则只发**极简通知**；异常/无效/临时错误时再自动附详细日志文件
+- TG 先发**精简摘要**（不刷屏，从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判；摘要不展示本地日志路径）；若 `auths` 与 `auths_no_quota` 两个目录都为空（以目录内 `*.json` 文件数判定，避免解析输出误判），则只发**极简通知**。
+- **详细日志默认不发送**（避免刷屏）；仅当脚本异常（exit!=0）才自动附详细日志文件。若需要在无效/临时错误时也发送，可设置 `SEND_DETAIL=1`。
 - 日志落盘：`/tmp/codex-auths/hourly-reconcile-*.log`（另有 crontab 运行日志 `/tmp/codex-auths-cron.log`）
 
 ---
