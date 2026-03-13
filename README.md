@@ -97,9 +97,6 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ![运行截图2](assets/skill-run-02.jpg)
 
-#### 图3：巡检结果补充截图
-
-![运行截图3](assets/skill-run-03.jpg)
 
 ### 对话总结（版本演进）
 
