@@ -95,12 +95,11 @@ NQ_COUNT=$(find "${AUTH_DIR}_no_quota" -maxdepth 1 -type f -name '*.json' 2>/dev
 if [ "$Q_COUNT" -eq 0 ] && [ "$NQ_COUNT" -eq 0 ]; then
   SUMMARY=$(printf "Codex auths 每小时校验：两个目录均为空\nUTC: %s\n上海: %s\nexit=%s\n" "$TS_UTC" "$TS_SH" "$RC")
 else
-  SUMMARY=$(printf "Codex auths 每小时校验\nUTC: %s\n上海: %s\n结果: %s (exit=%s)\n\n检查:%s | 有额:%s | 无额:%s | 无效移入:%s(库存%s)\n去重:%s | 临时:%s | report清理:%s\n无效原因:%s\n\n如需删除无效JSON：回复 删除无效JSON\n日志文件:%s\n" \
+  SUMMARY=$(printf "Codex auths 每小时校验\nUTC: %s\n上海: %s\n结果: %s (exit=%s)\n\n检查:%s | 有额:%s | 无额:%s | 无效移入:%s(库存%s)\n去重:%s | 临时:%s | report清理:%s\n无效原因:%s\n\n如需删除无效JSON：回复 删除无效JSON\n" \
     "$TS_UTC" "$TS_SH" "$STATUS" "$RC" \
     "$CHECKED" "$FINAL_QUOTA" "$FINAL_NO_QUOTA" "$INVALID_MOVED" "$INVALID_STOCK" \
     "$DEDUP" "$TRANSIENT" "$REPORT_PRUNE" \
-    "$INVALID_REASONS" \
-    "$OUT_FILE")
+    "$INVALID_REASONS")
 fi
 
 send_message() {
