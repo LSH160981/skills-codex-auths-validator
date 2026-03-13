@@ -313,7 +313,10 @@ Recommended cron payload style（结论）：
 4. **无效文件策略升级**：无效文件不直接删，统一入 `auths_invalid_dir` 并附原因，询问用户是否删除。
 5. **多 provider 识别**：对齐 Cli-Proxy-API-Management-Center 类型体系，先识别 provider 再选择验证方式。
 6. **归档接管能力**：支持 ZIP/7z，自动只处理 JSON，忽略代码和其他非 JSON 文件；新增专用脚本 `import-archive.mjs`。
-7. **新手零配置体验**：用户只给 JSON 目录即可自动接管；若未提供则按 CPA 线索自动探测 `auth-dir`。
+7. **新手零配置体验**：用户只给一个目录即可自动接管：
+   - `--auth-dir <auths_dir>`（只给“有额度目录 auths”）
+   - 自动推导 `<auths_dir>_no_quota` / `<auths_dir>_invalid` / `reports`（与 auths 同级）
+   - 若未提供则按 CPA 线索自动探测 `auth-dir`。
 8. **自动化运维闭环**：固定 3 个定时任务（小时清理/每日学习/每日同步）。
 9. **文档与仓库同步纪律**：任何改动必须同步 SKILL + WORKFLOW + README，并立即中文 commit + push。
 10. **三层JWT过期检测**：优先级 JWT id_token exp > expired 字段 > last_refresh+7天，无法判断默认未过期继续 API 校验。

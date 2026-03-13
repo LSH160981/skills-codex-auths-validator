@@ -57,10 +57,14 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 ### 四个脚本（谁做什么）
 
+> 统一入口参数：三个脚本都支持 `--auth-dir <auths_dir>`（只给“有额度目录 auths”一个目录就能跑），会自动推导：
+> - `<auths_dir>_no_quota` / `<auths_dir>_invalid` / `reports`（与 auths 同级）
+> 仍可用 `--dir-quota/--dir-no-quota/--dir-invalid/--report-dir` 覆盖。
+
 - `scripts/discover-auth-dir.mjs`：首次安装自动探测目录
-- `scripts/validate-auths.mjs`：一次性人工批处理
-- `scripts/hourly-reconcile.mjs`：每小时定时稳定巡检
-- `scripts/import-archive.mjs`：ZIP/7z 导入接管（仅 JSON）
+- `scripts/validate-auths.mjs`：一次性人工批处理（支持 `--auth-dir`）
+- `scripts/hourly-reconcile.mjs`：每小时定时稳定巡检（支持 `--auth-dir`）
+- `scripts/import-archive.mjs`：ZIP/7z 导入接管（仅 JSON，支持 `--auth-dir`）
 
 ### 固定三项定时任务（上海时区）
 

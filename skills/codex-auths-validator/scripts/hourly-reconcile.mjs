@@ -2,20 +2,21 @@
 import fs from 'fs';
 import path from 'path';
 
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i === -1 || i + 1 >= process.argv.length) return fallback;
-  return process.argv[i + 1];
-}
+import { arg, numArg } from './lib/args.mjs';
+import { deriveDirsFromAuthDir } from './lib/paths.mjs';
 
-const DIR_QUOTA = arg('dir-quota', '/home/docker/CLIProxyAPI/auths');
-const DIR_NO_QUOTA = arg('dir-no-quota', '/home/docker/CLIProxyAPI/auths_no_quota');
-const DIR_INVALID = arg('dir-invalid', `${DIR_QUOTA}_invalid`);
-const CONCURRENCY = Number(arg('concurrency', '40')) || 40;
-const TIMEOUT_MS = Number(arg('timeout-ms', '12000')) || 12000;
+// 统一入口：只给 --auth-dir（有额度目录 auths）即可运行
+const AUTH_DIR = arg('auth-dir', '');
+const derived = AUTH_DIR ? deriveDirsFromAuthDir(AUTH_DIR) : null;
+
+const DIR_QUOTA = arg('dir-quota', derived?.quotaDir || '/home/docker/CLIProxyAPI/auths');
+const DIR_NO_QUOTA = arg('dir-no-quota', derived?.noQuotaDir || '/home/docker/CLIProxyAPI/auths_no_quota');
+const DIR_INVALID = arg('dir-invalid', derived?.invalidDir || `${DIR_QUOTA}_invalid`);
+const CONCURRENCY = numArg('concurrency', 40);
+const TIMEOUT_MS = numArg('timeout-ms', 12000);
 const LOCK_FILE = arg('lock-file', '/tmp/codex-auths-hourly.lock');
-const LOCK_MAX_AGE_MS = Number(arg('lock-max-age-ms', '900000')) || 900000;
-const REPORT_DIR = arg('report-dir', '/home/docker/CLIProxyAPI/reports');
+const LOCK_MAX_AGE_MS = numArg('lock-max-age-ms', 900000);
+const REPORT_DIR = arg('report-dir', derived?.reportDir || '/home/docker/CLIProxyAPI/reports');
 
 // 问题1：限制 reports 目录最大文件数，保留最近3天（72小时=72个文件）
 const MAX_REPORT_FILES = Number(arg('max-report-files', '72')) || 72;

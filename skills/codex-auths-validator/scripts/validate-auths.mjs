@@ -2,17 +2,17 @@
 import fs from 'fs';
 import path from 'path';
 
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  if (i === -1 || i + 1 >= process.argv.length) return fallback;
-  return process.argv[i + 1];
-}
+import { arg, numArg } from './lib/args.mjs';
+import { deriveDirsFromAuthDir } from './lib/paths.mjs';
 
-const DIR_QUOTA = arg('dir-quota', '/home/docker/CLIProxyAPI/auths');
-const DIR_NO_QUOTA = arg('dir-no-quota', '/home/docker/CLIProxyAPI/auths_no_quota');
-const DIR_INVALID = arg('dir-invalid', `${DIR_QUOTA}_invalid`);
-const CONCURRENCY = Number(arg('concurrency', '40')) || 40;
-const TIMEOUT_MS = Number(arg('timeout-ms', '12000')) || 12000;
+const AUTH_DIR = arg('auth-dir', '');
+const derived = AUTH_DIR ? deriveDirsFromAuthDir(AUTH_DIR) : null;
+
+const DIR_QUOTA = arg('dir-quota', derived?.quotaDir || '/home/docker/CLIProxyAPI/auths');
+const DIR_NO_QUOTA = arg('dir-no-quota', derived?.noQuotaDir || '/home/docker/CLIProxyAPI/auths_no_quota');
+const DIR_INVALID = arg('dir-invalid', derived?.invalidDir || `${DIR_QUOTA}_invalid`);
+const CONCURRENCY = numArg('concurrency', 40);
+const TIMEOUT_MS = numArg('timeout-ms', 12000);
 const INVALID_ACTION = (arg('invalid-action', 'quarantine') || 'quarantine').toLowerCase(); // delete|quarantine
 
 const now = new Date();

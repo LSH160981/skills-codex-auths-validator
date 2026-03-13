@@ -154,7 +154,13 @@ rm -rf /home/docker/CLIProxyAPI/auths_invalid/*
 
 ## 6. 标准执行流程 A：目录内全量验证
 
-1. 扫描 `/home/docker/CLIProxyAPI/auths/*.json`
+统一入口参数（只给一个目录就能跑）：
+- `--auth-dir <auths_dir>`：只给“有额度目录 auths”即可运行
+- 自动推导：`<auths_dir>_no_quota` / `<auths_dir>_invalid` / `reports`（与 auths 同级）
+- 仍可用 `--dir-quota/--dir-no-quota/--dir-invalid/--report-dir` 覆盖
+
+流程：
+1. 扫描 `<auths_dir>/*.json`
 2. 先处理 `._*.json` → 直接隔离
 3. 并发调用验证接口（默认并发 40）
 4. 按规则判定 PASS/REMOVE
@@ -171,7 +177,7 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs
 
 ```bash
 node skills/codex-auths-validator/scripts/validate-auths.mjs \
-  --dir /home/docker/CLIProxyAPI/auths \
+  --auth-dir /home/docker/CLIProxyAPI/auths \
   --concurrency 40 \
   --timeout-ms 12000
 ```

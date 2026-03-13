@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 function arg(name, fallback = '') {
   const i = process.argv.indexOf(`--${name}`);
@@ -51,7 +51,7 @@ function parseAuthDirFromText(text) {
 function tryDockerMountCandidates() {
   const out = [];
   try {
-    const ps = execSync("docker ps --format '{{.ID}} {{.Names}}'", { stdio: ['ignore', 'pipe', 'ignore'] })
+    const ps = execFileSync('docker', ['ps', '--format', '{{.ID}} {{.Names}}'], { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .trim()
       .split('\n')
@@ -60,7 +60,7 @@ function tryDockerMountCandidates() {
       const [id, name] = line.split(/\s+/, 2);
       if (!id) continue;
       if (!/(cli|proxy|cpa|codex)/i.test(name || '')) continue;
-      const raw = execSync(`docker inspect ${id}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+      const raw = execFileSync('docker', ['inspect', id], { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
       const arr = JSON.parse(raw);
       const mounts = arr?.[0]?.Mounts || [];
       for (const m of mounts) {
