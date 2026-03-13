@@ -381,6 +381,29 @@ When new evidence appears (new GitHub version, API change, user policy change):
 4. Keep success snapshots (counts + key reasons) for regression comparison.
 5. If schedule behavior changes, update cron workflow text too.
 
+### Claude 套餐检测接口更新（2026-03-13 巡检）
+
+**来源：** `router-for-me/Cli-Proxy-API-Management-Center` commit `ccf90f8`（2026-03-07）
+
+Claude 配额检测新增了 Profile API 接口来判断套餐类型：
+
+- **新增端点：** `GET https://api.anthropic.com/api/oauth/profile`
+  - 与 `GET https://api.anthropic.com/api/oauth/usage` 并发请求（`Promise.allSettled`）
+  - 请求头：`CLAUDE_REQUEST_HEADERS`（与 usage 接口相同的 Bearer token）
+- **关键响应字段：** `organization.rate_limit_tier`（字符串）
+- **套餐映射表（`CLAUDE_PLAN_TYPE_MAP`）：**
+  - `default_claude_max_5x` → `plan_max5`（Max 5x 套餐）
+  - `default_claude_max_20x` → `plan_max20`（Max 20x 套餐）
+  - `default_claude_pro` → `plan_pro`（Pro 套餐）
+  - `default_claude_ai` → `plan_free`（免费版）
+  - 未知 tier 值 → `plan_unknown`（保底）
+  - `rate_limit_tier` 为空 / profile 请求失败 → `planType` 为 `null`（不影响 usage 判断）
+- **注意：** profile 请求失败不影响 usage 数据解析，两者独立返回。
+
+**对 skill 规则影响：** Claude auth 文件的额度展示现在可以额外展示套餐类型，但**核心 VALID/INVALID 判断逻辑不变**（仍依赖 usage 接口的 quota 窗口数据）。
+
+---
+
 ### Lock management enhancement (2026-03-09)
 
 `hourly-reconcile.mjs` lock file format was upgraded from `pid\n` to `pid\ntimestamp\n`.
