@@ -393,38 +393,9 @@ node skills/codex-auths-validator/scripts/discover-auth-dir.mjs
 
 ---
 
-## 13. 事故复盘与架构教训
+## 13. 事故复盘与架构教训（统一归档）
 
-### 事故：OpenClaw cron 40小时未发通知（2026-03-12 ~ 2026-03-13）
+所有历史事故与架构教训统一记录在：
+- `skills/codex-auths-validator/reports/lock-incident.md`
 
-**时间线：**
-
-```
-阶段1（~20h）：fast-pool isolated agent
-  → 错误：All models failed: 502/timeout
-  → 原因：fast-pool provider（self）全部不可用
-
-阶段2（~10h）：改 agentId=main，仍是 isolated sessionTarget
-  → 错误：No API key found for provider "ak"（x36次）
-  → 原因：isolated session 独立初始化，不继承主 session auth key
-           auth-profiles.json 只有 qwen/minimax，无 ak/self
-
-阶段3（~4h）：改 sessionTarget=main + systemEvent
-  → 状态：status=ok，deliveryStatus=not-requested，durationMs≈14s
-  → 原因：systemEvent 只是把文字推入主 session 消息队列
-           主 session 未必在线，即使在线也不保证处理工具调用
-           14秒是入队耗时，脚本从未被执行
-
-阶段4（修复）：系统 crontab + shell + curl
-  → 彻底绕开 OpenClaw cron delivery 机制
-  → node 脚本直接跑，curl 直接发 TG Bot API
-  → 100% 可靠，不依赖任何 LLM session 或 auth key
-```
-
-**根因总结：**
-> OpenClaw cron 的设计目标是"让 AI agent 定时执行任务"，不是"定时执行 shell 命令"。对于需要稳定执行 shell 脚本 + 发通知的场景，系统 crontab 是唯一可靠选择。
-
-**预防措施（新机器必做）：**
-1. 安装后立即用系统 crontab 设置 `hourly-run-and-notify.sh`
-2. 禁用对应的 OpenClaw cron 任务，避免重复/干扰
-3. 验证方法：手动执行脚本一次，确认 TG 收到消息后再离开
+WORKFLOW.md 不再保留事故长文，仅保留执行流程与结论。

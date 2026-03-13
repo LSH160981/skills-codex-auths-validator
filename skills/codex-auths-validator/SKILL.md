@@ -302,7 +302,7 @@ When user asks for hourly auto-clean:
 5. If failed, report error and processed progress.
 
 Recommended cron payload style（结论）：
-- **不要用 OpenClaw cron 来做"每小时跑脚本+发TG"**（见 Incident Log 2026-03-13）。
+- **不要用 OpenClaw cron 来做"每小时跑脚本+发TG"**（详见 `reports/lock-incident.md`）。
 - 该场景必须用**系统 crontab + `scripts/hourly-run-and-notify.sh`**。
 - OpenClaw cron 仅保留用于"AI 学习巡检/总结"等纯 agentTurn 任务。
 
@@ -475,7 +475,7 @@ When this skill is installed/used on a new machine, ALWAYS ensure these three cr
 
 ### Job A: Hourly auth validation cleanup（系统 crontab）
 
-> 结论：该任务必须用系统 crontab（OpenClaw cron 不可靠，见 Incident Log 2026-03-13）。
+> 结论：该任务必须用系统 crontab（OpenClaw cron 不可靠，详见 `reports/lock-incident.md`）。
 
 - Name（crontab）：`Codex auths hourly-run-and-notify`
 - Schedule：`0 * * * *`（Asia/Shanghai 在系统层面按服务器时区；如需严格上海时区请把服务器 TZ 设为 Asia/Shanghai）
@@ -554,69 +554,9 @@ When user provides a JSON folder path, the skill should:
 
 If no path is provided, run discovery first; only ask user when discovery has low confidence.
 
+## 事故 / Bug / 事故复盘（统一归档）
 
-## Incident Log
+历史事故与 bug 记录统一归档到：`skills/codex-auths-validator/reports/lock-incident.md`（仓库唯一真相）。
 
-- 2026-03-07 05:20 UTC：检测到 hourly cron 一直输出"已有任务在运行，跳过本次"，说明 `/tmp/codex-auths-hourly.lock` 可能残留导致新一轮被阻止。
-  - 采取：查找 `/tmp/codex-auths-hourly.lock`，确认无对应进程后手动删除锁，避免脚本误判。
-  - 结果：再次调用 `cron.run` 仍被判"already-running"，推测旧执行尚未结束，因此先暂停任务。
-- 2026-03-07 05:24 UTC：确认无正在运行的 `hourly-reconcile` 进程后，删除锁文件并重新 `cron.run`。
-  - 观察：又被调度拒绝，说明旧队列还在空转，最终选择禁用 cron 以彻底结束这次事故。
-- 2026-03-07 05:25 UTC：按照指示重新启用并再次尝试重跑，依旧依赖锁判断。最终将任务停用、锁清理和事故日志记录在 SKILL.md，确保后续恢复时可以快速回溯。
-
-记录来源：OpenClaw 日志 + cron.runs + 审查 `/tmp/codex-auths-hourly.lock`。
-
-- 2026-03-07 08:24 UTC：脚本在验证 JSON 时收到 `Failed to load quota: 500 {"detail":"Request timeout"}`。
-  - 采取：确认与调度的 500/timeout 属于瞬时后端超时，按流程把文件保留原位（transient keep），不移出。
-  - 结果：在日志中记录该状态以便后面观察是否重复发生；若持续 500 则需要检查网络/接口稳定性。
-
-- 2026-03-09 10:53~11:13 UTC：hourly-reconcile 锁故障事件（对应上海时间 2026-03-09 傍晚）。
-  - 现象：cron 任务反复提示"已有任务在运行，跳过本次"，整体校验停摆，Telegram 不再收到巡检结果。
-  - 原因：`/tmp/codex-auths-hourly.lock` 残留（上次执行遗留），锁文件存在但无进程占用。旧版只写 `PID` 无时间戳，无法判断是否为陈旧锁。
-  - 修复（commit 6a3f41d "增强锁管理"）：
-    - `hourly-reconcile.mjs` 现在写入 `pid\ntimestamp` 格式到锁文件。
-    - 新增 `LOCK_MAX_AGE_MS`（默认 900000ms = 15分钟），超龄即视为陈旧锁。
-    - 新增 `isProcessAlive(pid)` 检查锁 PID 是否存活。
-    - 新增 `cleanStaleLock()`：进程不存活 OR 锁年龄 >= 15min，自动清除陈旧锁并继续启动。
-    - 恢复指南文档已归档为 `reports/lock-incident.md`。
-  - 恢复流程要点：检查锁 -> `lsof`/`pgrep` 确认无进程 -> `rm -f /tmp/codex-auths-hourly.lock` -> 禁用 cron -> 等 2-3 分钟 -> 重新启用。
-  - 影响评估：锁增强后，陈旧锁（进程已死或超 15 分钟）会被自动清理，不再阻塞后续执行。
-
-- 2026-03-12 14:59 UTC：三层过期检测误判导致 131 个有效 token 被全部移入 invalid。
-  - 现象：hourly-reconcile 跑完后 auths 和 auths_no_quota 变为 0，131 个文件全入 invalid，原因 INVALID_EXPIRED。
-  - 根因：新增三层过期检测后，`refresh_token` 续期失败时直接判定 `INVALID_EXPIRED`，没有继续走 API 校验。但 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值，导致过期字段显示过期但 API 仍能返回 200。
-  - 修复：`refresh_token` 失效后不再直接 INVALID，继续用原 `access_token` 走 API 校验，只有 API 返回 401 才最终判定 `INVALID_EXPIRED`。适用脚本：`hourly-reconcile.mjs`、`import-archive.mjs`。
-  - 恢复：将 131 个文件移回 auths，重新跑 hourly-reconcile，结果：31 有额度、95 无额度、5 真正 401 失效。
-  - 教训：**过期字段只能做"提前预判"辅助，不能替代 API 校验做最终决策。API 说了算。**
-
-- 2026-03-13 00:25~01:34 UTC：cron 任务 agent 配置错误，所有 isolated job 连续静默失败约 34 小时。
-  - 现象：用户报告"每小时验证没有发送消息"，查 `cron.runs` 发现错误为 `All models failed: ak/claude-sonnet-4-6: No API key found for provider "ak"... (auth)` 连续 34 次。
-  - 根因：cron 任务的 `agentId` 为 `fast-pool`（isolated agent），该 agent 目录下 `auth-profiles.json` 无可用 API key，无法启动 LLM session 执行任务，但调度器不抛出运行级别告警，故用户无感知。注意：delivery 目标曾误写为 `@heartbeat` 导致投递失败（400 chat not found）。
-  - 修复（最终）：
-    - Codex 每小时校验改为系统 crontab（不依赖 OpenClaw cron delivery）
-    - GitHub 学习巡检任务 delivery 目标修正为 `to=REDACTED_TG_CHAT`（不再使用 `@heartbeat`）
-  - 涉及任务：Codex auths 每小时校验 / 模型健康巡检 / GitHub 学习巡检（共 3 个）
-  - 教训：**cron isolated job 使用独立 agent 时，必须确认该 agent 目录有有效 auth key，否则会静默失败；同时 delivery.to 必须是数字 chat_id。**
-
-- 2026-03-13 01:34~02:27 UTC：OpenClaw cron delivery 机制根本无法可靠执行脚本+发TG，约40小时持续未发通知。
-
-  **事故时间线（三阶段排查）：**
-
-  | 时间 | 阶段 | 现象 | 错误原因 |
-  |------|------|------|---------|
-  | 最初 | fast-pool isolated | 连续 timeout/auth 失败 | fast-pool agent 无 auth key |
-  | 中期 | agentId=main isolated | `No API key found for provider "ak"` x36次 | isolated session 独立创建，读不到主 session auth |
-  | 后期 | sessionTarget=main systemEvent | status=ok, deliveryStatus=not-requested | systemEvent 只入队文字，不保证我实际执行工具调用 |
-
-  **根因分析：**
-  - OpenClaw cron 的 `sessionTarget: isolated` + `payload: agentTurn` 需要独立 LLM session 有自己的 auth key（不继承主 session）
-  - `sessionTarget: main` + `payload: systemEvent` 只是把文字注入主 session 消息队列，但主 session 未必在线处理，durationMs=14秒仅是入队耗时，脚本从未被执行
-  - 两种模式都不适合"无人值守、定时执行 shell 脚本 + 发 TG"场景
-
-  **最终解决方案（已落地）：**
-  - 放弃 OpenClaw cron delivery，改用**系统 crontab** 直接执行
-  - 新增脚本：`scripts/hourly-run-and-notify.sh`（node 跑校验 + curl 直发 TG）
-  - 系统 crontab 条目：`0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1`
-  - OpenClaw cron 任务 `eb8ad007-426f-4061-ba30-5c48c2e7e8da` 已禁用
-
-  **根本教训：需要"定时执行命令 + 直接发通知"的自动化任务，必须用系统 crontab + shell + curl，不要依赖 OpenClaw cron delivery 机制。**
+- 请不要在 SKILL.md 中继续追加长篇事故日志
+- SKILL.md 只保留结论与指向该报告的链接
