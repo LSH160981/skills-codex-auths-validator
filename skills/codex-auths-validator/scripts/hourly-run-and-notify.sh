@@ -35,38 +35,52 @@ set -e
 
 printf "[%s] exit=%s\n\n%s\n" "$TS_UTC" "$RC" "$OUTPUT" > "$OUT_FILE"
 
-# 生成精简摘要（避免 TG 消息一堆\n / 大段输出）
-# 从 OUTPUT 中提取关键统计（输出格式由 hourly-reconcile.mjs 固定）
-get_num_after_colon() {
-  # usage: get_num_after_colon "前缀文字"
-  # e.g. get_num_after_colon "总共检查"
-  echo "$OUTPUT" | awk -v k="$1" -F'：' '$0 ~ "^"k"：" {gsub(/[^0-9]/,"",$2); print $2; exit}'
-}
-
-get_stock_in_paren() {
-  # 从形如：无效已移入...：2（当前库存 34） 提取 34
-  echo "$OUTPUT" | awk '/当前库存/ { if (match($0, /当前库存[[:space:]]*([0-9]+)/, a)) { print a[1]; exit } }'
-}
+# 生成精简摘要：从最新 report JSON 读取（避免解析 OUTPUT 文本误判）
+REPORT_DIR="${REPORT_DIR:-$(dirname "$AUTH_DIR")/reports}"
+LATEST_REPORT=$(ls -t "$REPORT_DIR"/hourly-reconcile-*.json 2>/dev/null | head -1 || true)
 
 REPORT_PRUNE=$(echo "$OUTPUT" | awk '/^已清理[[:space:]]*[0-9]+[[:space:]]*个旧 report 文件/ { if (match($0, /已清理[[:space:]]*([0-9]+)/, a)) print a[1]; exit }')
-DEDUP=$(get_num_after_colon "重复账户去重删除")
-CHECKED=$(get_num_after_colon "总共检查")
-FINAL_QUOTA=$(get_num_after_colon "有效有额度")
-FINAL_NO_QUOTA=$(get_num_after_colon "有效无额度")
-INVALID_MOVED=$(get_num_after_colon "无效已移入")
-INVALID_STOCK=$(get_stock_in_paren)
-TRANSIENT=$(get_num_after_colon "临时错误保留")
-INVALID_REASONS=$(echo "$OUTPUT" | awk -F'：' '/^无效原因统计：/ {print $2; exit}')
-
 : "${REPORT_PRUNE:=0}"
-: "${DEDUP:=0}"
-: "${CHECKED:=0}"
-: "${FINAL_QUOTA:=0}"
-: "${FINAL_NO_QUOTA:=0}"
-: "${INVALID_MOVED:=0}"
-: "${INVALID_STOCK:=0}"
-: "${TRANSIENT:=0}"
-: "${INVALID_REASONS:=无}"
+
+# 默认值（report 读不到时不至于炸）
+DEDUP=0
+CHECKED=0
+FINAL_QUOTA=0
+FINAL_NO_QUOTA=0
+INVALID_MOVED=0
+INVALID_STOCK=0
+TRANSIENT=0
+INVALID_REASONS="无"
+
+if [ -n "$LATEST_REPORT" ] && [ -s "$LATEST_REPORT" ]; then
+  PY_OUT=$(python3 - "$LATEST_REPORT" <<'PY'
+import json,sys
+p=sys.argv[1]
+with open(p,'r',encoding='utf-8') as f:
+  j=json.load(f)
+# 输出 TSV：checked, finalQuota, finalNoQuota, invalidMoved, finalInvalid, keptTransient, invalidReasonsText
+checked=j.get('checkedTotal',0)
+finalQuota=j.get('finalQuota',0)
+finalNoQuota=j.get('finalNoQuota',0)
+invalidMoved=j.get('invalidMoved',0)
+finalInvalid=j.get('finalInvalid',0)
+keptTransient=j.get('keptTransient',0)
+reasons=j.get('invalidReasons',{}) or {}
+reasonsText='无' if not reasons else '，'.join([f"{k}: {v}" for k,v in reasons.items()])
+print(f"{checked}\t{finalQuota}\t{finalNoQuota}\t{invalidMoved}\t{finalInvalid}\t{keptTransient}\t{reasonsText}")
+PY
+) || PY_OUT=""
+
+  if [ -n "$PY_OUT" ]; then
+    CHECKED=$(echo "$PY_OUT" | awk -F'\t' '{print $1}')
+    FINAL_QUOTA=$(echo "$PY_OUT" | awk -F'\t' '{print $2}')
+    FINAL_NO_QUOTA=$(echo "$PY_OUT" | awk -F'\t' '{print $3}')
+    INVALID_MOVED=$(echo "$PY_OUT" | awk -F'\t' '{print $4}')
+    INVALID_STOCK=$(echo "$PY_OUT" | awk -F'\t' '{print $5}')
+    TRANSIENT=$(echo "$PY_OUT" | awk -F'\t' '{print $6}')
+    INVALID_REASONS=$(echo "$PY_OUT" | awk -F'\t' '{print $7}')
+  fi
+fi
 
 STATUS="OK"
 if [ "$RC" -ne 0 ]; then STATUS="ERROR"; fi

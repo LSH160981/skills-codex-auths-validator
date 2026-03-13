@@ -70,7 +70,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 
 1. **每小时自动校验清理（系统 crontab）**：`skills/codex-auths-validator/scripts/hourly-run-and-notify.sh`
    - 默认只需要配置一个目录：`AUTH_DIR=/path/to/auths`（不配则默认 `/home/docker/CLIProxyAPI/auths`）
-   - 默认发精简摘要
+   - 默认发精简摘要（从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判）
    - 若有额/无额两个目录都为空（以目录内 `*.json` 文件数判定）：仅发极简通知
    - 异常/无效/临时错误：自动附详细日志文件
 2. 每日 00:00 GitHub 学习巡检（OpenClaw cron，可用 agentTurn）
