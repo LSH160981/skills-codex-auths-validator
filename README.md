@@ -16,8 +16,8 @@ https://github.com/LSH160981/skills-codex-auths-validator
 3) 立刻执行一次全量校验与分层迁移；
 4) 自动创建并启用全部定时任务（上海时区）：
    - 每小时自动校验清理（hourly-reconcile）
-   - 每日 00:00 GitHub 学习巡检
-   - 每日 00:00 Skill 同步
+   - 每日 01:00（上海）GitHub 接口学习巡检
+   - 每日 01:00（上海）Skill 同步
 5) 把执行结果和创建的 cron job id 全部回报给我。
 ```
 
@@ -74,8 +74,11 @@ https://github.com/LSH160981/skills-codex-auths-validator
    - 默认发精简摘要（从 `reports/hourly-reconcile-*.json` 读取关键统计，避免解析文本误判）
    - 若有额/无额两个目录都为空（以目录内 `*.json` 文件数判定）：仅发极简通知
    - **默认不发详细日志文件**（用户不想被刷屏）；仅当脚本异常（exit!=0）才会自动附详细日志文件。需要在无效/临时错误时也附日志可设置 `SEND_DETAIL=1`
-2. 每日 00:00 GitHub 学习巡检（OpenClaw cron，可用 agentTurn）
-3. 每日 00:00 Skill 同步（OpenClaw cron，可用 agentTurn）
+2. **每日 01:00 GitHub 接口学习巡检**（OpenClaw cron，凌晨上海时间）
+   - 精准追踪 6 个维度：认证API / Token续期接口 / Account字段 / provider枚举 / JSON schema / 状态码语义
+   - 用 grep + GitHub API commits 对比上游变更，发现真实变化才更新 skill，不无中生有
+   - 固定输出格式：每项明确说有/无变化 + commit hash
+3. **每日 01:00 Skill 同步**（OpenClaw cron，可用 agentTurn）
 
 ### 关键状态（给用户解释"为什么无效"）
 
@@ -119,7 +122,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - **非 codex 文件不再误入 invalid**：hourly 与 validate-auths 行为一致，schema 有效则保留
 - **TG 消息自动分片**：超 4000 字符改发文件，不再被截断
 - **摘要新增续期数/去重数**：`refreshedCount` / `dedupRemoved` 写入 report 并展示
-- **报告解析不依赖 python3**：`hourly-run-and-notify.sh` 用 node 解析 report JSON，适配精简环境
+- **学习巡检规则升级**：精准追踪 6 个接口维度（认证API/Token续期/Account/provider枚举/schema/状态码），凌晨 01:00（上海）运行，固定输出格式
 - **自动清理 writeJsonAtomic 垃圾文件**：清理 `.*.tmp-PID-TS` 遗留文件，避免目录长期污染
 - **reports 清理更稳定**：按文件名（时间戳）排序，不再依赖 mtime
 

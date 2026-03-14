@@ -331,6 +331,7 @@ Recommended cron payload style（结论）：
 16. **续期失败不直接 INVALID（关键修复）**：refresh_token 失效时不直接丢弃，继续用原 access_token 走 API 校验——因为 OpenAI access_token 实际存活时间可能长于 `expired` 字段标注值。只有 API 返回 401 才最终判定失效。
 17. **cron agentId 必须用 main（运维经验）**：isolated agent（如 fast-pool）需要独立 auth-profiles.json；若未配置则所有 isolated cron job 会静默 auth 失败，无任何运行输出，用户无感知。创建/修复 cron 任务时统一使用 `agentId: "main"`，sessionKey 对应 `agent:main:telegram:direct:<chatId>`。
 18. **定时任务通知必须用系统 crontab + shell + curl（架构决策）**：OpenClaw cron 的两种模式（isolated agentTurn / main systemEvent）均不适合"无人值守执行 shell 脚本+发 TG"场景。isolated 模式需独立 auth key；main systemEvent 只入队文字不保证执行。**正确做法**：系统 crontab 直接跑 shell 脚本，curl 调 Telegram Bot API 发通知，完全不依赖 LLM session。新增 `scripts/hourly-run-and-notify.sh` 封装此逻辑。
+19. **每日学习巡检规则升级（2026-03-14）**：从泛泛 `git pull + grep` 升级为精准接口追踪，明确只追 6 个维度（认证API / Token续期 / Account字段 / provider枚举 / JSON schema / 状态码语义）；时间从 00:00 调整为凌晨 01:00（上海）；输出格式固定化，每项必须明确说有/无变化；只有真实变化才更新 skill 文件，禁止无中生有。
 
 ## Learning rationale and evolution notes (must maintain)
 
@@ -466,31 +467,102 @@ For any change related to `codex-auths-validator` (rules, user path handling, AP
 
 Do not delay bundling changes for later when they affect behavior or operation.
 
-## Daily 00:00 GitHub learning workflow (Asia/Shanghai)
+## Daily 01:00 GitHub learning workflow (Asia/Shanghai)
 
-When user requires scheduled learning and code tracking:
+> **使命：本 skill 所有逻辑来自上游项目，必须追踪上游接口变化并及时同步。**
 
-1. Create a cron job with `expr: 0 0 * * *`, `tz: Asia/Shanghai`.
-2. Each run searches GitHub for new/changed code around:
-   - CLI Proxy API Management Center
-   - Codex auth JSON validation
-   - `chatgpt.com/backend-api/wham/usage`
-   - credential cleanup strategies
-3. Extract and compare mutable items:
-   - auth file directory conventions
-   - JSON schema changes (`type/access_token/account_id/...`)
-   - endpoint and required headers
-   - status code semantics and handling policy
-4. If meaningful changes are found:
-   - update this SKILL.md (rules/workflow/evolution notes)
-   - append a new success/learning snapshot
-5. Send user a Chinese daily learning summary:
-   - checked repositories/files
-   - key findings and impact
-   - whether skill was updated
-   - whether manual confirmation is needed
+当需要创建/更新学习巡检任务时：
 
-Recommended cron payload style: `sessionTarget: isolated`, `payload.kind: agentTurn`, `agentId: "main"`（必须用 main，确保 auth 可用）.
+- Schedule: `0 1 * * *` (`Asia/Shanghai`)（凌晨 01:00，避开整点高峰）
+- `sessionTarget: isolated`, `payload.kind: agentTurn`, `agentId: "main"`
+
+### 只追这 6 个维度（其余不管）
+
+| 维度 | 具体关注点 |
+|------|-----------|
+| 认证/校验 API | endpoint、请求头字段、响应结构、状态码语义 |
+| Token 生命周期 | refresh_token 流程、expired 字段、id_token 结构、续期接口参数 |
+| Account 体系 | account_id 字段名变更、chatgpt_account_id、多账户字段 |
+| 新 provider/type | AuthFileType 枚举新增/废弃 |
+| JSON schema | auth 文件新增/废弃字段 |
+| 状态码语义 | 429/401/403 有没有新含义 |
+
+### 执行流程（每次必须全部执行）
+
+**Step 1：拉取本地镜像更新**
+```bash
+cd /root/.openclaw/workspace/tmp-cli-proxy && git fetch && git log HEAD..origin/main --oneline 2>/dev/null | head -20 || git log --oneline -5
+cd /root/.openclaw/workspace/tmp-cpa && git fetch && git log HEAD..origin/main --oneline 2>/dev/null | head -20 || git log --oneline -5
+# 有新 commit 则 git pull --rebase
+```
+
+**Step 2：精准 grep**
+```bash
+# 接口相关
+grep -rn 'wham/usage\|backend-api/wham\|Chatgpt-Account-Id\|chatgpt_account_id\|chatgptAccountId' \
+  /root/.openclaw/workspace/tmp-cli-proxy /root/.openclaw/workspace/tmp-cpa \
+  --include='*.ts' --include='*.js' --include='*.vue' -l 2>/dev/null
+
+# Token 续期
+grep -rn 'refresh_token\|grant_type.*refresh\|oauth/token\|auth0.openai' \
+  /root/.openclaw/workspace/tmp-cli-proxy /root/.openclaw/workspace/tmp-cpa \
+  --include='*.ts' --include='*.js' -l 2>/dev/null
+
+# Provider/type 枚举
+grep -rn 'AuthFileType\|type.*codex\|type.*claude\|type.*gemini\|type.*qwen\|type.*kimi\|type.*vertex\|type.*iflow\|type.*antigravity' \
+  /root/.openclaw/workspace/tmp-cli-proxy /root/.openclaw/workspace/tmp-cpa \
+  --include='*.ts' --include='*.js' 2>/dev/null | head -40
+
+# 状态码处理
+grep -rn '401\|403\|429\|limit_reached\|used_percent\|rate_limit' \
+  /root/.openclaw/workspace/tmp-cli-proxy /root/.openclaw/workspace/tmp-cpa \
+  --include='*.ts' --include='*.js' 2>/dev/null | grep -v 'node_modules\|\.git' | head -40
+```
+
+**Step 3：GitHub Commits 检查**
+
+用 `web_fetch` 或 `browser` 访问：
+- `https://api.github.com/repos/router-for-me/Cli-Proxy-API-Management-Center/commits?per_page=10`
+- `https://github.com/router-for-me/Cli-Proxy-API-Management-Center/commits/main`
+
+重点看近 7 天 commits，提取标题含 auth/token/codex/quota/provider/api 的变更。
+
+**Step 4：对比当前 skill 规则**
+
+读取本 SKILL.md 的 "Decision rules"、"Pre-flight expiry check"、"设计盲区" 三节，判断：
+- 有无新接口参数 → 更新 Decision rules
+- 有无新 provider type → 更新 `lib/provider.mjs`
+- 有无 JSON 字段变化 → 更新 `lib/provider.mjs#schemaValid`
+- 状态码语义有无调整 → 更新 Decision rules
+- refresh_token 接口有无变化（endpoint/client_id/grant_type）→ 更新 `lib/codex.mjs#tryRefreshToken`
+
+**Step 5：按需同步（只有真实变化才更新）**
+
+```
+1. 更新 SKILL.md（对应章节 + Learning rationale 段落）
+2. 如影响脚本逻辑：更新 lib/provider.mjs 或 lib/codex.mjs
+3. 更新根目录 README.md（版本演进部分）
+4. git add ... && git commit -m '学习更新: <一句话说什么变了>'
+5. git push skills-origin master
+```
+
+### 输出格式（必须严格按此）
+
+```
+巡检时间（上海）：
+检查了：
+
+接口相关发现：
+- wham/usage 端点：{无变化 / 有变化：xxx}
+- 请求头：{无变化 / 有变化：xxx}
+- Token 续期接口：{无变化 / 有变化：xxx}
+- Provider/type 枚举：{无变化 / 新增：xxx}
+- JSON schema：{无变化 / 有变化：xxx}
+- 状态码语义：{无变化 / 有变化：xxx}
+
+skill 更新：{未更新 / 已更新，commit: xxxx}
+需要人工确认：{否 / 是，原因：xxx}
+```
 
 ## Mandatory auto-provision on new machine (3 cron jobs)
 
@@ -523,15 +595,12 @@ When this skill is installed/used on a new machine, ALWAYS ensure these three cr
 
 > OpenClaw cron 里的同名 job（如果存在）应禁用，避免重复跑。
 
-### Job B: Daily 00:00 GitHub learning check
+### Job B: Daily 01:00 GitHub learning check（凌晨接口巡检）
 
-- Name: `Codex auths 每日00:00 GitHub学习巡检（上海）`
-- Schedule: `0 0 * * *` (`Asia/Shanghai`)
-- Behavior:
-  - search GitHub for related code changes
-  - compare mutable items (path/schema/endpoint/headers/status semantics)
-  - update this skill when changes are meaningful
-  - send daily Chinese learning summary
+- Name: `Codex auths 每日01:00 GitHub学习巡检（上海）`
+- Schedule: `0 1 * * *` (`Asia/Shanghai`)
+- 追踪维度：认证API / Token续期接口 / Account字段 / provider枚举 / JSON schema / 状态码语义
+- 详见上方 "Daily 01:00 GitHub learning workflow" 章节
 
 ### Job C: Daily 00:00 skill self-sync (Asia/Shanghai)
 
