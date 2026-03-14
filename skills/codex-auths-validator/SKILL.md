@@ -606,6 +606,8 @@ If no path is provided, run discovery first; only ask user when discovery has lo
     .filter(f => f.endsWith('.json'))
     .filter(f => lstatSync(join(dir, f)).isFile())  // ← 加这一行
 修复：已在 lib/codex.mjs#listJsonFiles 统一实现
+
+补充修复：listJsonFiles 对目录不可读/不存在加 try/catch，直接返回 []，避免 cron 整体崩溃
 ```
 
 ### 3. 非 codex 文件在 hourly-reconcile 被误判为 invalid
@@ -685,31 +687,27 @@ If no path is provided, run discovery first; only ask user when discovery has lo
 ### 10. import-archive.mjs 子目录同名文件 basename 冲突
 ```
 问题：archive 里 a/auth.json 和 b/auth.json 的 basename 都是 auth.json
-     safeCopy 时目标目录里已有同名 → 自动改名为 auth__imported1.json
-     但 result 数组里记的是原始 basename，report 里"样本"对应关系混乱
-建议：result 里额外记录 originalRelPath（在 archive 内的相对路径）
-     这样 report 里展示 "a/auth.json → auth__imported1.json" 更易溯源
-当前状态：实际导入不影响正确性（文件内容正确），只是 report 可读性略差
+     旧实现用 jsonFiles.find(f => path.basename(f) === name) 回查 src
+     → 会找错文件，造成“验证 A 文件但复制了 B 文件”的数据正确性风险
+修复：results 里直接记录 fullPath，不再用 basename 反查；导入时直接用 fullPath
+建议（可选增强）：同时记录 originalRelPath（archive 内相对路径），report 里展示映射更易溯源
 ```
 
-### 11. reports 目录 mtime 精度导致同批文件排序不稳定
+### 11. reports 目录排序不稳定（mtime 精度问题）
 ```
 问题：同一秒内生成的多个 report 文件，sort by mtime 可能顺序不定
-     pruneReportDir 删除"最老"的文件时，可能误删同批的
-建议：report 文件名已含时间戳（hourly-reconcile-2026-03-13T...json），
-     优先按文件名排序（字典序 = 时间序），而不是 mtime
-当前状态：低频场景（每小时1个文件），实际影响极小，记录备查
+影响：pruneReportDir 删除“最老”文件时可能误删同批
+修复：按文件名字典序排序（文件名含时间戳，字典序=时间序），不依赖 mtime
 ```
 
-### 12. lock 文件遗留的 .tmp-PID-ts 临时文件
+### 12. writeJsonAtomic 遗留 .tmp 垃圾文件
 ```
-问题：writeJsonAtomic 崩溃时（kill -9）.tmp-PID-ts 文件会遗留在目录里
-影响：目录里出现 .auth123.json.tmp-1234-1234567890 等垃圾文件
-建议：可在 hourly-reconcile 启动时扫描并清理 auth 目录里的 .*.tmp-*-* 文件
-伪代码：
-  for f in readdirSync(dir).filter(f => /^\..*\.tmp-\d+-\d+$/.test(f)):
-    unlinkSync(join(dir, f))
-当前状态：未实现，属于低优先级清理项
+问题：writeJsonAtomic 在 kill -9 时可能遗留 .<base>.tmp-PID-TS 文件
+影响：目录污染（不影响校验，但长期堆积）
+修复：
+  1) lib/codex.mjs 新增 cleanTmpFiles(dir)
+  2) hourly-reconcile.mjs 启动时清理 DIR_QUOTA / DIR_NO_QUOTA
+  3) hourly-run-and-notify.sh 启动时 find -delete 清理
 ```
 
 ## 事故 / Bug / 事故复盘（统一归档）

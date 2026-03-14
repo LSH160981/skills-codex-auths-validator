@@ -5,7 +5,7 @@ import { execFileSync } from 'child_process';
 
 import { arg, numArg } from './lib/args.mjs';
 import { deriveDirsFromAuthDir } from './lib/paths.mjs';
-import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi } from './lib/codex.mjs';
+import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, safeMove } from './lib/codex.mjs';
 import { detectProvider, schemaValid } from './lib/provider.mjs';
 
 // ─── 公共工具函数 ───────────────────────────────────────────────────────────────
@@ -52,11 +52,14 @@ try {
 function walkAllFiles(dir) {
   const out = [];
   const walk = (d) => {
-    for (const n of fs.readdirSync(d)) {
+    let entries;
+    try { entries = fs.readdirSync(d); } catch { return; } // 目录不可读则跳过
+    for (const n of entries) {
       const p = path.join(d, n);
-      const st = fs.statSync(p);
+      let st;
+      try { st = fs.lstatSync(p); } catch { continue; } // 权限问题/dangling symlink 跳过
       if (st.isDirectory()) walk(p);
-      else out.push(p);
+      else if (st.isFile()) out.push(p); // 只取真实文件，排除 symlink
     }
   };
   walk(dir);
@@ -78,21 +81,8 @@ function safeCopy(src, dstDir, basename) {
   return name;
 }
 
-// 问题3：全局 safeMoveDedup，用于去重时移动（rename 语义），替代原来内嵌的 safeMoveLocal
-function safeMoveDedup(src, dstDir, basename) {
-  let name = basename;
-  const extName = path.extname(name);
-  const stem = extName ? path.basename(name, extName) : name;
-  let dst = path.join(dstDir, name);
-  let n = 1;
-  while (fs.existsSync(dst)) {
-    name = `${stem}__dup${n}${extName}`;
-    dst = path.join(dstDir, name);
-    n += 1;
-  }
-  fs.renameSync(src, dst);
-}
-
+// 问题3：用 lib/safeMove 替代局部 safeMoveDedup，统一跨设备移动支持（EXDEV fallback）
+// safeMoveDedup 已移除，改用 safeMove（已从 lib/codex.mjs 导入）
 
 async function checkCodex(json) {
   const token = (json.access_token || '').toString().trim();
@@ -144,7 +134,7 @@ async function worker() {
     const name = path.basename(full);
 
     if (name.startsWith('._')) {
-      results.push({ name, provider: 'unknown', status: 'INVALID_APPLEDOUBLE', reason: 'appledouble', target: 'invalid' });
+      results.push({ name, fullPath: full, provider: 'unknown', status: 'INVALID_APPLEDOUBLE', reason: 'appledouble', target: 'invalid' });
       continue;
     }
 
@@ -152,21 +142,21 @@ async function worker() {
     try {
       json = JSON.parse(fs.readFileSync(full, 'utf8'));
     } catch {
-      results.push({ name, provider: 'unknown', status: 'INVALID_JSON', reason: 'invalid_json', target: 'invalid' });
+      results.push({ name, fullPath: full, provider: 'unknown', status: 'INVALID_JSON', reason: 'invalid_json', target: 'invalid' });
       continue;
     }
 
     const provider = detectProvider(json);
     if (!schemaValid(provider, json)) {
-      results.push({ name, provider, status: 'INVALID_MISSING_FIELDS', reason: `${provider}_missing_required_fields`, target: 'invalid' });
+      results.push({ name, fullPath: full, provider, status: 'INVALID_MISSING_FIELDS', reason: `${provider}_missing_required_fields`, target: 'invalid' });
       continue;
     }
 
     if (provider === 'codex' || (json.access_token && json.account_id)) {
       const r = await checkCodex(json);
-      results.push({ name, provider: 'codex', ...r });
+      results.push({ name, fullPath: full, provider: 'codex', ...r });
     } else {
-      results.push({ name, provider, status: 'SCHEMA_VALID_PROVIDER', reason: 'schema_valid_provider', target: 'no_quota' });
+      results.push({ name, fullPath: full, provider, status: 'SCHEMA_VALID_PROVIDER', reason: 'schema_valid_provider', target: 'no_quota' });
     }
   }
 }
@@ -182,7 +172,9 @@ async function worker() {
   const providerHist = {};
 
   for (const r of results) {
-    const src = jsonFiles.find((f) => path.basename(f) === r.name) || path.join(extractDir, r.name);
+    // 直接用 fullPath，避免 basename 重复时用 find 找错文件
+    const src = r.fullPath;
+    if (!fs.existsSync(src)) continue;
     if (r.target === 'quota') {
       safeCopy(src, DIR_QUOTA, r.name);
       importedToAuths += 1;
@@ -200,14 +192,21 @@ async function worker() {
   }
 
   // ── 去重：对比 account_id，同一账户只保留第一个，其余移入 invalid ──
-  // 问题3：删除原来内嵌的 listJson / safeMoveLocal 局部函数，
-  //        改用全局 safeMoveDedup（rename 语义）完成去重移动。
-  //        listJson 也已在全局（hourly-reconcile 风格），这里直接内联读取目录。
+  // 使用 lib/safeMove（含 EXDEV 跨设备 fallback），listJsonFiles 改为安全版本
   const seenAccounts = new Map();
   let dedupRemoved = 0;
 
   for (const scanDir of [DIR_QUOTA, DIR_NO_QUOTA]) {
-    const files = fs.readdirSync(scanDir).filter((f) => f.endsWith('.json'));
+    // 用 lstatSync 过滤，只处理真实文件（与 listJsonFiles 行为一致）
+    let files;
+    try {
+      files = fs.readdirSync(scanDir).filter((f) => {
+        if (!f.endsWith('.json')) return false;
+        try { return fs.lstatSync(path.join(scanDir, f)).isFile(); } catch { return false; }
+      });
+    } catch {
+      files = [];
+    }
     for (const file of files) {
       const full = path.join(scanDir, file);
       let json;
@@ -215,8 +214,7 @@ async function worker() {
       const account = (json.account_id || '').toString().trim();
       if (!account) continue;
       if (seenAccounts.has(account)) {
-        // 问题3：复用全局 safeMoveDedup 替代局部 safeMoveLocal
-        safeMoveDedup(full, DIR_INVALID, file);
+        safeMove(full, DIR_INVALID, file); // lib/safeMove：含 EXDEV 跨设备支持
         dedupRemoved += 1;
         if (scanDir === DIR_QUOTA) importedToAuths -= 1;
         else importedToNoQuota -= 1;

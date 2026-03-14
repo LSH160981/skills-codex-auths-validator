@@ -17,9 +17,18 @@ TS_SH="$(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S Asia/Shanghai")"
 OUT_FILE="$TMP_DIR/hourly-reconcile-$(date -u +"%Y%m%dT%H%M%SZ").log"
 
 AUTH_DIR="${AUTH_DIR:-/home/docker/CLIProxyAPI/auths}"
+# 去掉尾部斜杠，避免 dirname 推导出错（如 /foo/ → dirname=/foo，而非期望的上一级）
+AUTH_DIR="${AUTH_DIR%/}"
 CONCURRENCY="${CONCURRENCY:-40}"
 TIMEOUT_MS="${TIMEOUT_MS:-12000}"
 SEND_DETAIL="${SEND_DETAIL:-0}"       # 1 = 异常+有无效/临时时也发详细日志
+
+# ── 清理 writeJsonAtomic 遗留的 .*.tmp-PID-TS 垃圾文件（kill -9 中断时可能遗留）──
+for _dir in "$AUTH_DIR" "${AUTH_DIR}_no_quota"; do
+  if [ -d "$_dir" ]; then
+    find "$_dir" -maxdepth 1 -name '.*\.tmp-[0-9]*-[0-9]*' -type f -delete 2>/dev/null || true
+  fi
+done
 
 # ── 运行校验脚本 ────────────────────────────────────────────────────────────────
 set +e
@@ -33,6 +42,7 @@ set -e
 printf "[%s] exit=%s\n\n%s\n" "$TS_UTC" "$RC" "$OUTPUT" > "$OUT_FILE"
 
 # ── 从最新 report JSON 读取关键字段（不解析 OUTPUT 文本，避免误判）───────────
+# REPORT_DIR 以 AUTH_DIR 的父目录为基础推导，AUTH_DIR 已去除尾部斜杠
 REPORT_DIR="${REPORT_DIR:-$(dirname "$AUTH_DIR")/reports}"
 LATEST_REPORT=$(ls -t "$REPORT_DIR"/hourly-reconcile-*.json 2>/dev/null | head -1 || true)
 
@@ -42,26 +52,20 @@ INVALID_MOVED=0; INVALID_STOCK=0; TRANSIENT=0
 REFRESHED=0; INVALID_REASONS="无"
 
 if [ -n "$LATEST_REPORT" ] && [ -s "$LATEST_REPORT" ]; then
-  PY_OUT=$(python3 - "$LATEST_REPORT" <<'PY'
-import json, sys
-try:
-    with open(sys.argv[1], 'r', encoding='utf-8') as f:
-        j = json.load(f)
-    checked      = j.get('checkedTotal', 0)
-    dedup        = j.get('dedupRemoved', 0)
-    refreshed    = j.get('refreshedCount', 0)
-    finalQuota   = j.get('finalQuota', 0)
-    finalNoQuota = j.get('finalNoQuota', 0)
-    invalidMoved = j.get('invalidMoved', 0)
-    finalInvalid = j.get('finalInvalid', 0)
-    transient    = j.get('keptTransient', 0)
-    reasons      = j.get('invalidReasons') or {}
-    reasonsText  = '无' if not reasons else '，'.join(f"{k}:{v}" for k, v in reasons.items())
-    print(f"{checked}\t{dedup}\t{refreshed}\t{finalQuota}\t{finalNoQuota}\t{invalidMoved}\t{finalInvalid}\t{transient}\t{reasonsText}")
-except Exception as e:
-    print(f"0\t0\t0\t0\t0\t0\t0\t0\t读取失败:{e}")
-PY
-) || PY_OUT=""
+  # 用 node 解析 JSON（node 一定存在；python3 在精简环境可能没有）
+  PY_OUT=$(node -e "
+try {
+  const j = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+  const reasons = j.invalidReasons || {};
+  const rt = Object.entries(reasons).map(([k,v]) => k+':'+v).join('，') || '无';
+  const fields = [
+    j.checkedTotal||0, j.dedupRemoved||0, j.refreshedCount||0,
+    j.finalQuota||0, j.finalNoQuota||0, j.invalidMoved||0,
+    j.finalInvalid||0, j.keptTransient||0, rt
+  ];
+  process.stdout.write(fields.join('\t'));
+} catch(e) { process.stdout.write('0\t0\t0\t0\t0\t0\t0\t0\t读取失败:'+e.message); }
+" "$LATEST_REPORT" 2>/dev/null) || PY_OUT=""
 
   if [ -n "$PY_OUT" ]; then
     IFS=$'\t' read -r CHECKED DEDUP REFRESHED FINAL_QUOTA FINAL_NO_QUOTA \

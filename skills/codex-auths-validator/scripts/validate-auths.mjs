@@ -22,12 +22,15 @@ const INVALID_ACTION = (arg('invalid-action', 'quarantine') || 'quarantine').toL
 
 // ─── 初始化目录 ──────────────────────────────────────────────────────────────────
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-const quarantine = path.join(DIR_QUOTA, `_quarantine_${stamp}`);
+// quarantine 目录只在需要时才创建，避免多余空目录
+const quarantine = INVALID_ACTION === 'quarantine'
+  ? path.join(DIR_QUOTA, `_quarantine_${stamp}`)
+  : null;
 
 fs.mkdirSync(DIR_QUOTA,    { recursive: true });
 fs.mkdirSync(DIR_NO_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_INVALID,  { recursive: true });
-if (INVALID_ACTION === 'quarantine') fs.mkdirSync(quarantine, { recursive: true });
+if (quarantine) fs.mkdirSync(quarantine, { recursive: true });
 
 // ─── 主流程 ──────────────────────────────────────────────────────────────────────
 const files = [
@@ -153,7 +156,7 @@ for (const op of ops) {
 
   if (op.action === 'invalid') {
     reasons[op.reason] = (reasons[op.reason] || 0) + 1;
-    if (INVALID_ACTION === 'quarantine') {
+    if (INVALID_ACTION === 'quarantine' && quarantine) {
       safeMove(src, quarantine, op.file);
       invalidQuarantined += 1;
     } else {
@@ -194,7 +197,7 @@ const summary = {
   invalidDir: DIR_INVALID,
 };
 
-if (INVALID_ACTION === 'quarantine') {
+if (INVALID_ACTION === 'quarantine' && quarantine) {
   fs.writeFileSync(path.join(quarantine, '_validation_report.json'), JSON.stringify(summary, null, 2));
 }
 

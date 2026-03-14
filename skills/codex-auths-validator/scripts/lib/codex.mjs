@@ -22,12 +22,13 @@ export function getJwtExp(idToken) {
 /**
  * 判断 token 是否已过期。
  * 优先级：JWT exp > expired 字段 > last_refresh+7天 > 默认未过期
+ * 注意：使用 <= 而非 <，恰好到期的秒数也算过期（严格过期语义）
  */
 export function isTokenExpired(json) {
   const nowMs = Date.now();
 
   const jwtExp = getJwtExp(json?.id_token);
-  if (jwtExp !== null) return jwtExp * 1000 < nowMs;
+  if (jwtExp !== null) return jwtExp * 1000 <= nowMs;
 
   const expiredStr = (json?.expired || '').toString().trim();
   if (expiredStr) {
@@ -86,17 +87,44 @@ export function safeMove(src, dstDir, basename) {
 
 /**
  * 安全列出目录下所有 *.json 文件（排除目录和符号链接，只返回真实普通文件）。
+ * 目录不可读或不存在时返回空数组，不抛出（避免 cron 因权限问题整体崩溃）。
  */
 export function listJsonFiles(dir) {
-  return fs.readdirSync(dir).filter((f) => {
-    if (!f.endsWith('.json')) return false;
-    try {
-      const stat = fs.lstatSync(path.join(dir, f));
-      return stat.isFile(); // 排除目录、symlink 等
-    } catch {
-      return false;
+  try {
+    return fs.readdirSync(dir).filter((f) => {
+      if (!f.endsWith('.json')) return false;
+      try {
+        const stat = fs.lstatSync(path.join(dir, f));
+        return stat.isFile(); // 排除目录、symlink 等
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 清理指定目录下的写入中间态垃圾文件（.*.tmp-PID-TS 格式）。
+ * writeJsonAtomic 在 kill -9 时可能遗留这些文件。
+ * 安全：只删除匹配模式的文件，不影响正常 JSON 文件。
+ */
+export function cleanTmpFiles(dir) {
+  try {
+    const tmpPattern = /^\..+\.tmp-\d+-\d+$/;
+    for (const f of fs.readdirSync(dir)) {
+      if (!tmpPattern.test(f)) continue;
+      try {
+        const full = path.join(dir, f);
+        if (fs.lstatSync(full).isFile()) fs.unlinkSync(full);
+      } catch {
+        // 单个文件失败不影响整体
+      }
     }
-  });
+  } catch {
+    // 目录不可读则跳过
+  }
 }
 
 /**

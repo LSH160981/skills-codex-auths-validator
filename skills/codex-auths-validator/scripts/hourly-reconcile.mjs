@@ -4,7 +4,7 @@ import path from 'path';
 
 import { arg, numArg } from './lib/args.mjs';
 import { deriveDirsFromAuthDir } from './lib/paths.mjs';
-import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, writeJsonAtomic, safeMove, listJsonFiles } from './lib/codex.mjs';
+import { isTokenExpired, tryRefreshToken, validateCodexUsageByApi, writeJsonAtomic, safeMove, listJsonFiles, cleanTmpFiles } from './lib/codex.mjs';
 import { detectProvider, validateSchemaWithReason } from './lib/provider.mjs';
 
 // 统一入口：只给 --auth-dir（有额度目录 auths）即可运行
@@ -28,24 +28,21 @@ fs.mkdirSync(DIR_NO_QUOTA, { recursive: true });
 fs.mkdirSync(DIR_INVALID, { recursive: true });
 fs.mkdirSync(REPORT_DIR, { recursive: true });
 
-// 问题1：启动时清理超出限制的旧 report 文件（按修改时间升序，删除最老的）
+// 问题1：启动时清理超出限制的旧 report 文件
+// 按文件名排序（文件名含 ISO 时间戳，字典序 = 时间序），比 mtime 更稳定
+// （同一秒 mtime 不稳定，文件名唯一）
 function pruneReportDir() {
   try {
     const files = fs.readdirSync(REPORT_DIR)
       .filter((f) => f.endsWith('.json'))
-      .map((f) => {
-        const full = path.join(REPORT_DIR, f);
-        const mtime = fs.statSync(full).mtimeMs;
-        return { file: f, full, mtime };
-      })
-      .sort((a, b) => a.mtime - b.mtime); // 最老的排最前面
+      .sort(); // 字典序 = 时间序（文件名格式：hourly-reconcile-2026-03-14T...json）
 
     const excess = files.length - MAX_REPORT_FILES;
     if (excess > 0) {
       const toDelete = files.slice(0, excess);
-      for (const { full } of toDelete) {
+      for (const f of toDelete) {
         try {
-          fs.unlinkSync(full);
+          fs.unlinkSync(path.join(REPORT_DIR, f));
         } catch {
           // 忽略单个文件删除失败
         }
@@ -58,6 +55,10 @@ function pruneReportDir() {
 }
 
 pruneReportDir();
+
+// 启动时清理 auth 目录里的 .*.tmp-PID-TS 垃圾文件（writeJsonAtomic 异常中断遗留）
+cleanTmpFiles(DIR_QUOTA);
+cleanTmpFiles(DIR_NO_QUOTA);
 
 let lockFd;
 

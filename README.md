@@ -119,4 +119,7 @@ https://github.com/LSH160981/skills-codex-auths-validator
 - **非 codex 文件不再误入 invalid**：hourly 与 validate-auths 行为一致，schema 有效则保留
 - **TG 消息自动分片**：超 4000 字符改发文件，不再被截断
 - **摘要新增续期数/去重数**：`refreshedCount` / `dedupRemoved` 写入 report 并展示
+- **报告解析不依赖 python3**：`hourly-run-and-notify.sh` 用 node 解析 report JSON，适配精简环境
+- **自动清理 writeJsonAtomic 垃圾文件**：清理 `.*.tmp-PID-TS` 遗留文件，避免目录长期污染
+- **reports 清理更稳定**：按文件名（时间戳）排序，不再依赖 mtime
 
