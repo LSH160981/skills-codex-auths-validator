@@ -2,8 +2,17 @@
 # 每小时运行校验并直接用 curl 发 TG：不依赖 OpenClaw cron delivery / 不依赖 LLM session
 set -euo pipefail
 
-TG_TOKEN="REDACTED_TG_TOKEN"
-TG_CHAT="REDACTED_TG_CHAT"
+# Telegram 凭证不要写死在仓库里：从环境变量或本机 secrets 文件读取
+SECRETS_FILE="${CODEX_AUTH_VALIDATOR_SECRETS_FILE:-/root/.openclaw/secrets/codex-auths-validator.env}"
+if [ -f "$SECRETS_FILE" ]; then
+  # shellcheck disable=SC1090
+  set +u
+  source "$SECRETS_FILE"
+  set -u
+fi
+
+: "${TG_TOKEN:?缺少 TG_TOKEN。请在环境变量中设置，或在 $SECRETS_FILE 写入 TG_TOKEN='xxx'}"
+: "${TG_CHAT:?缺少 TG_CHAT。请在环境变量中设置，或在 $SECRETS_FILE 写入 TG_CHAT='你的chat_id'}"
 TMP_DIR="/tmp/codex-auths"
 mkdir -p "$TMP_DIR"
 

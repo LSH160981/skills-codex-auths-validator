@@ -187,14 +187,14 @@ node skills/codex-auths-validator/scripts/validate-auths.mjs \
 
 系统 crontab 条目（只配置一个目录即可运行）：
 ```bash
-0 * * * * AUTH_DIR=/home/docker/CLIProxyAPI/auths bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
+0 * * * * AUTH_DIR=/home/docker/CLIProxyAPI/auths CODEX_AUTH_VALIDATOR_SECRETS_FILE=/root/.openclaw/secrets/codex-auths-validator.env bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1
 ```
 
 不写 `AUTH_DIR` 时默认使用：`/home/docker/CLIProxyAPI/auths`。
 
 安装命令：
 ```bash
-(crontab -l 2>/dev/null | grep -v hourly-run-and-notify; echo "0 * * * * bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
+(crontab -l 2>/dev/null | grep -v hourly-run-and-notify; echo "0 * * * * CODEX_AUTH_VALIDATOR_SECRETS_FILE=/root/.openclaw/secrets/codex-auths-validator.env bash /root/.openclaw/workspace/skills/codex-auths-validator/scripts/hourly-run-and-notify.sh >> /tmp/codex-auths-cron.log 2>&1") | crontab -
 ```
 
 ### 5) `scripts/hourly-reconcile.mjs`（每小时定时任务专用，稳定版）
@@ -590,7 +590,7 @@ When this skill is installed/used on a new machine, ALWAYS ensure these three cr
   - 本地日志：`/tmp/codex-auths-cron.log` + `/tmp/codex-auths/hourly-reconcile-*.log`
 
 - 依赖：
-  - TG token/chatId 已硬编码在脚本内（按用户要求“关键信息直接体现在代码上”）
+  - TG token/chatId **禁止硬编码在仓库文件**；必须按用户单独配置：使用环境变量或本机 secrets 文件（默认 `/root/.openclaw/secrets/codex-auths-validator.env`），换用户必须单独询问并单独存放。
   - 不依赖 OpenClaw agent session / auth-profiles.json
 
 > OpenClaw cron 里的同名 job（如果存在）应禁用，避免重复跑。
