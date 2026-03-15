@@ -7,3 +7,31 @@ __pycache__/
 # Local secrets (never commit)
 /root/.openclaw/secrets/
 *.env
+
+# OpenClaw local state / workspace noise
+.openclaw/
+.clawhub/
+memory/
+
+# Local ops scripts & reports
+scripts/
+*.json
+*.zip
+*.log
+/tmp/
+
+# Large/build artifacts
+ai-chat-webapp/
+node_modules/
+dist/
+
+# Local skill installs / sandboxes
+skills/agent-browser/
+skills/find-skills/
+skills/proactive-agent/
+skills/self-improving-agent/
+skills/skill-vetter/
+skills/summarize/
+skills_repo/
+tmp-cli-proxy/
+tmp-cpa/
