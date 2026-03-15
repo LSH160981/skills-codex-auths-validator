@@ -35,3 +35,16 @@ skills/summarize/
 skills_repo/
 tmp-cli-proxy/
 tmp-cpa/
+
+# OpenClaw workspace persona/config files (keep locally, never commit)
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+
+# Local probes
+model_probe.py
+run_health.py
+test_all_models.py
